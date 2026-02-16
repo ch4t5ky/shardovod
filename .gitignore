@@ -1,0 +1,54 @@
+# Java
+*.class
+*.jar
+*.war
+*.ear
+*.log
+*.iml
+*.class
+*.orig
+
+# Maven / Gradle
+target/
+build/
+out/
+.gradle/
+.idea/
+*.ipr
+*.iws
+*.iml
+*.classpath
+*.project
+
+# IntelliJ
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+
+# Eclipse
+.project
+.classpath
+.settings/
+bin/
+
+# NetBeans
+nbproject/private/
+build/
+nbbuild/
+dist/
+.nb-gradle/
+
+# Minecraft / Forge specific
+*.litemod
+*.jar.disabled
+logs/
+*.log
+crash-reports/
+run/
+mods/
+
+# OS files
+.DS_Store
+Thumbs.db
