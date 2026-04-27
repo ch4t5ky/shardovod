@@ -1,0 +1,45 @@
+services:
+  minecraft:
+    image: itzg/minecraft-server:latest
+    container_name: minecraft
+    restart: unless-stopped
+    ports:
+      - "25565:25565"   # game port
+      - "25575:25575"   # RCON (only expose to localhost in production)
+    environment:
+      # Accept EULA automatically
+      EULA: "TRUE"
+      ENABLE_WHITELIST: "false"
+      ENFORE_WHITELIST: "false"
+      ONLINE_MODE: "false"
+      # Pin to exactly 1.16.5
+      VERSION: "1.16.5"
+      TYPE: "VANILLA"
+
+      # Server settings
+      DIFFICULTY: "normal"       # no hostile mobs — cleaner workshop env
+      MODE: "creative"         # players can fly and see everything
+      ALLOW_FLIGHT: "true"
+      MAX_PLAYERS: "20"
+      LEVEL: "minecraft:flat"
+      MOTD: "OpenSearch Cluster Simulator"
+      SPAWN_PROTECTION: "0"        # allow building at spawn
+
+      # RCON — must match shardovod -rcon-pass flag
+      ENABLE_RCON: "true"
+      RCON_PORT: "25575"
+      RCON_PASSWORD: "shardovod_rcon"
+      BROADCAST_RCON_TO_OPS: "false"
+
+      # Give shardovod permission to run commands without op
+      # (alternatively add it to ops.json)
+      ENABLE_COMMAND_BLOCK: "true"
+
+      # Performance
+      MEMORY: "2G"
+      USE_AIKAR_FLAGS: "true"
+    volumes:
+      - minecraft_data:/data
+
+volumes:
+  minecraft_data:

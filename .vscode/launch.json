@@ -1,0 +1,23 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "shardovod",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/shardovod/main.go",
+      "env": {
+        "OPENSEARCH_ADDRESSES": "http://localhost:9200",
+        "OPENSEARCH_USERNAME": "",
+        "OPENSEARCH_PASSWORD": "",
+        "RCON_ADDR": "localhost:25575",
+        "RCON_PASSWORD": "shardovod_rcon",
+        "POLL_INTERVAL": "5s",
+        "PEN_X": "180",
+        "PEN_Y": "100",
+        "PEN_Z": "180"
+      }
+    }
+  ]
+}
