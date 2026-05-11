@@ -1,6 +1,6 @@
 services:
   minecraft:
-    image: itzg/minecraft-server:latest
+    image: itzg/minecraft-server:stable-java8
     container_name: minecraft
     restart: unless-stopped
     ports:
@@ -14,14 +14,33 @@ services:
       ONLINE_MODE: "false"
       # Pin to exactly 1.16.5
       VERSION: "1.16.5"
-      TYPE: "VANILLA"
+      TYPE: "FORGE"
 
       # Server settings
-      DIFFICULTY: "normal"       # no hostile mobs — cleaner workshop env
-      MODE: "creative"         # players can fly and see everything
+      DIFFICULTY: "peaceful"       # no hostile mobs — cleaner workshop env
+      MODE: "adventure"         # players can fly and see everything
+      SPAWN_MONSTERS: false
       ALLOW_FLIGHT: "true"
-      MAX_PLAYERS: "20"
-      LEVEL: "minecraft:flat"
+      MAX_PLAYERS: "40"
+      LEVEL_TYPE: FLAT
+      GENERATOR_SETTINGS: >-
+          {
+              "layers": [
+                  {
+                      "block": "minecraft:bedrock",
+                      "height": 1
+                  },
+                  {
+                      "block": "minecraft:stone",
+                      "height": 2
+                  },
+                  {
+                      "block": "minecraft:sandstone",
+                      "height": 15
+                  }
+              ],
+              "biome": "minecraft:desert"
+          }
       MOTD: "OpenSearch Cluster Simulator"
       SPAWN_PROTECTION: "0"        # allow building at spawn
 
@@ -36,10 +55,15 @@ services:
       ENABLE_COMMAND_BLOCK: "true"
 
       # Performance
-      MEMORY: "2G"
+      MEMORY: "4G"
       USE_AIKAR_FLAGS: "true"
+      ICON: /data/icon.jpg
+      OVERRIDE_ICON: true
+      OPS: |
+        84177fe7-3cb4-3709-a185-8f6ff9ad0a0c
+        eb623282-d6b0-3cd7-91d3-6c198b428770
     volumes:
-      - minecraft_data:/data
-
-volumes:
-  minecraft_data:
+      - ./data:/data
+      - ./plugins:/data/plugins
+      - ./mods:/data/mods
+      - ./resources/icon.jpg:/data/icon.jpg
