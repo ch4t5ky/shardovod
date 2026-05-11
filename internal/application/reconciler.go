@@ -39,9 +39,6 @@ func (s *Syncer) reconcileShards(ctx context.Context, shards []*os.Shard) {
 
 func (s *Syncer) onShardAdded(ctx context.Context, shard *os.Shard) {
 	sheepID := shard.ShardID
-	sheep := minecraft.NewSheep(sheepID, "", shard.ShardID, s.origin)
-	sheep.Color = SheepColor(shard.State, shard.IsPrimary())
-
 	var spawnLoc mc.Location
 	if shard.IsUnassigned() {
 		spawnLoc = s.unassignedLocation()
@@ -54,12 +51,14 @@ func (s *Syncer) onShardAdded(ctx context.Context, shard *os.Shard) {
 			spawnLoc = s.pens[penID].SpawnLocation()
 		}
 	}
-	sheep.Position = spawnLoc
+
+	sheep := minecraft.NewSheep(sheepID, "", shard.ShardID, spawnLoc) // убрали origin
+	sheep.Color = SheepColor(shard.State, shard.IsPrimary())
 
 	s.sheep[sheepID] = sheep
 	s.mapping.BindShard(sheepID, shard.ShardID)
 
-	s.commander.SpawnSheep(ctx, sheep, nil)
+	s.commander.SpawnSheep(ctx, sheep)
 	log.Infof("[syncer] spawn sheep for shard %s", shard.ShardID)
 }
 
@@ -135,6 +134,23 @@ func (s *Syncer) reconcileNodes(ctx context.Context, nodes []*os.Node) {
 	}
 }
 
+func (s *Syncer) nextPenPosition() (col, row int) {
+	index := len(s.pens)
+	// чётные — вправо от центра (0, 1, 2, ...)
+	// нечётные — влево от центра (-1, -2, ...)
+	var offset int
+	if index%2 == 0 {
+		offset = index / 2
+	} else {
+		offset = -(index + 1) / 2
+	}
+
+	centerRow := (s.penAreaMax.Z - s.penAreaMin.Z) / 2 / (minecraft.PenDepth + minecraft.PenGap)
+	row = centerRow + offset
+	col = 0
+	return col, row
+}
+
 func (s *Syncer) onNodeAdded(ctx context.Context, node *os.Node) {
 	if penID, ok := s.mapping.PenByNode(node.NodeID); ok {
 		pen := s.pens[penID]
@@ -144,12 +160,12 @@ func (s *Syncer) onNodeAdded(ctx context.Context, node *os.Node) {
 		return
 	}
 
-	index := len(s.pens)
-	pen := mc.NewPenAt("pen-"+node.NodeID, node.Name, s.penBase(), index)
+	col, row := s.nextPenPosition()
+	pen := mc.NewPenAtGrid("pen-"+node.NodeID, node.Name, s.penAreaMin, col, row)
 	s.pens[pen.PenID] = pen
 	s.mapping.BindNode(pen.PenID, node.NodeID)
 	s.commander.BuildPen(ctx, pen)
-	log.Infof("[syncer] build pen for node %s at index %d", node.NodeID, index)
+	log.Infof("[syncer] build pen for node %s at col=%d row=%d", node.NodeID, col, row)
 }
 
 func (s *Syncer) onNodeUpdated(ctx context.Context, prev, next *os.Node) {
@@ -190,22 +206,12 @@ func (s *Syncer) resolve(shard *os.Shard) (*mc.Sheep, *mc.Pen, bool) {
 	return s.sheep[sheepID], s.pens[penID], true
 }
 
-// penBase вычисляет Min первого загона из origin (центра первой ноды).
-func (s *Syncer) penBase() mc.Location {
-	return mc.Location{
-		X: s.origin.X - mc.PenWidth/2,
-		Y: s.origin.Y,
-		Z: s.origin.Z - mc.PenDepth/2,
-	}
-}
-
-// unassignedLocation — точка за пределами всех загонов для UNASSIGNED шардов.
+// unassignedLocation — точка за левым краем области загонов
 func (s *Syncer) unassignedLocation() mc.Location {
-	base := s.penBase()
 	return mc.Location{
-		X: base.X - 3,
-		Y: s.origin.Y,
-		Z: s.origin.Z,
+		X: s.penAreaMin.X - 3,
+		Y: s.penAreaMin.Y,
+		Z: s.penAreaMin.Z - 3,
 	}
 }
 

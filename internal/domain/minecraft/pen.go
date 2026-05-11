@@ -46,12 +46,13 @@ func NewPen(penID, name string, bounds Bounds) *Pen {
 	}
 }
 
-// NewPenAt создаёт загон по базовой точке и порядковому номеру вдоль оси Z
-func NewPenAt(penID, name string, base Location, index int) *Pen {
-	minZ := base.Z + index*PenStride
+// NewPenAtGrid создаёт загон по сетке (col, row) внутри явной области
+func NewPenAtGrid(penID, name string, areaMin Location, col, row int) *Pen {
+	x := areaMin.X + col*(PenWidth+PenGap)
+	z := areaMin.Z + row*(PenDepth+PenGap)
 	return NewPen(penID, name, Bounds{
-		Min: Location{X: base.X, Y: base.Y, Z: minZ},
-		Max: Location{X: base.X + PenWidth - 1, Y: base.Y, Z: minZ + PenDepth - 1},
+		Min: Location{X: x, Y: areaMin.Y, Z: z},
+		Max: Location{X: x + PenWidth - 1, Y: areaMin.Y, Z: z + PenDepth - 1},
 	})
 }
 

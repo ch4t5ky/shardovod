@@ -2,7 +2,6 @@ package application
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/ch4t5ky/shardovod/internal/domain/minecraft"
@@ -16,22 +15,26 @@ type OSClient interface {
 }
 
 type minecraftCommander interface {
-	SpawnSheep(ctx context.Context, sheep *minecraft.Sheep, pen *minecraft.Pen)
+	SpawnSheep(ctx context.Context, sheep *minecraft.Sheep)
 	UpdateSheepColor(ctx context.Context, sheepID string, color minecraft.Color)
 	KillSheep(ctx context.Context, sheepID string)
-	BuildPen(ctx context.Context, pen *minecraft.Pen)
+	MoveSheep(ctx context.Context, sheepID string, to minecraft.Location)
 	SheepExistsByName(ctx context.Context, name string) (bool, error)
 	KillAllSheeps(ctx context.Context)
+
+	BuildPen(ctx context.Context, pen *minecraft.Pen)
 	SetPenOffline(ctx context.Context, pen *minecraft.Pen)
-	MoveSheep(ctx context.Context, sheepID string, to minecraft.Location)
+	DestroyAllPens(ctx context.Context, bounds minecraft.Bounds)
 }
 
 type Syncer struct {
-	osClient  OSClient
-	commander minecraftCommander
-	mapping   *Mapping
-	interval  time.Duration
-	origin    minecraft.Location
+	osClient   OSClient
+	commander  minecraftCommander
+	mapping    *Mapping
+	interval   time.Duration
+	penAreaMin minecraft.Location
+	penAreaMax minecraft.Location
+	penCols    int
 
 	prevShards map[string]*opensearch.Shard // shardID → Shard
 	prevNodes  map[string]*opensearch.Node  // nodeID → Node
@@ -43,14 +46,22 @@ func NewSyncer(
 	osClient OSClient,
 	commander minecraftCommander,
 	interval time.Duration,
-	origin minecraft.Location,
+	penAreaMin minecraft.Location,
+	penAreaMax minecraft.Location,
 ) *Syncer {
+	cols := (penAreaMax.X - penAreaMin.X) / (minecraft.PenWidth + 1)
+	if cols < 1 {
+		cols = 1
+	}
+
 	return &Syncer{
 		osClient:   osClient,
 		commander:  commander,
 		mapping:    NewMapping(),
 		interval:   interval,
-		origin:     origin,
+		penAreaMin: penAreaMin,
+		penAreaMax: penAreaMax,
+		penCols:    cols,
 		prevShards: make(map[string]*opensearch.Shard),
 		prevNodes:  make(map[string]*opensearch.Node),
 		sheep:      make(map[string]*minecraft.Sheep),
@@ -85,57 +96,11 @@ func (s *Syncer) Run(ctx context.Context) {
 }
 
 func (s *Syncer) Bootstrap(ctx context.Context) error {
+	s.commander.DestroyAllPens(ctx, minecraft.Bounds{
+		Min: s.penAreaMin,
+		Max: s.penAreaMax,
+	})
 	s.commander.KillAllSheeps(ctx)
-
-	shards, err := s.osClient.GetShards(ctx)
-	if err != nil {
-		return fmt.Errorf("bootstrap: get shards: %w", err)
-	}
-
-	// актуальные shardID из OpenSearch
-	current := make(map[string]struct{}, len(shards))
-	for _, shard := range shards {
-		if shard.IsSystem() && shard.NodeID != "" {
-			current[shard.ShardID] = struct{}{}
-		}
-	}
-
-	// проверяем каждый шард — есть ли овца в мире
-	for _, shard := range shards {
-		if shard.IsSystem() || shard.NodeID == "" {
-			continue
-		}
-
-		exists, err := s.commander.SheepExistsByName(ctx, shard.ShardID)
-		if err != nil {
-			log.Warnf("[syncer] bootstrap: check sheep for shard %s: %v", shard.ShardID, err)
-			continue
-		}
-
-		if exists {
-			// восстанавливаем маппинг
-			penID, ok := s.mapping.PenByNode(shard.NodeID)
-			if !ok {
-				log.Warnf("[syncer] bootstrap: no pen for node %s", shard.NodeID)
-				continue
-			}
-			sheep := minecraft.NewSheep(shard.ShardID, penID, shard.ShardID, s.origin)
-			sheep.Color = SheepColor(shard.State, shard.IsPrimary())
-			s.sheep[sheep.SheepID] = sheep
-			s.mapping.BindShard(sheep.SheepID, shard.ShardID)
-		}
-	}
-
-	// убиваем стейл-овец — те, что в маппинге, но не в текущих шардах
-	for shardID, sheepID := range s.mapping.shardToSheep {
-		if _, ok := current[shardID]; !ok {
-			log.Infof("[syncer] bootstrap: killing stale sheep for shard %s", shardID)
-			s.commander.KillSheep(ctx, sheepID)
-			s.mapping.UnbindShard(sheepID, shardID)
-			delete(s.sheep, sheepID)
-		}
-	}
-
 	return nil
 }
 

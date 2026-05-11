@@ -169,7 +169,7 @@ func CleanTag(key string) string {
 }
 
 // SpawnSheep implements [application.minecraftCommander].
-func (c *Commander) SpawnSheep(ctx context.Context, sheep *minecraft.Sheep, pen *minecraft.Pen) {
+func (c *Commander) SpawnSheep(ctx context.Context, sheep *minecraft.Sheep) {
 	age := 0
 
 	nbt := fmt.Sprintf(
@@ -262,20 +262,88 @@ func (c *Commander) SetPenOffline(ctx context.Context, pen *minecraft.Pen) {
 	))
 }
 
-func (c *Commander) MoveSheep(ctx context.Context, sheepID string, to minecraft.Location) {
+func (c *Commander) GetSheepLocation(sheepID string) (minecraft.Location, error) {
 	tag := CleanTag(sheepID)
-	flyY := to.Y + 20
 	sel := fmt.Sprintf("@e[tag=%s,limit=1]", tag)
 
-	// поднять над новым загоном
-	c.send(fmt.Sprintf("tp %s %d %d %d", sel, to.X, flyY, to.Z))
+	resp, err := c.executeSync(fmt.Sprintf("data get entity %s Pos", sel))
+	if err != nil {
+		return minecraft.Location{}, err
+	}
+
+	// resp: "... has the following entity data: [Xd, Yd, Zd]"
+	var x, y, z float64
+	_, err = fmt.Sscanf(
+		resp[strings.Index(resp, "[")+1:strings.Index(resp, "]")],
+		"%fd, %fd, %fd", &x, &y, &z,
+	)
+	if err != nil {
+		return minecraft.Location{}, fmt.Errorf("parse pos: %w", err)
+	}
+	return minecraft.Location{X: int(x), Y: int(y), Z: int(z)}, nil
+}
+
+func (c *Commander) MoveSheep(ctx context.Context, sheepID string, to minecraft.Location) {
+	tag := CleanTag(sheepID)
+	sel := fmt.Sprintf("@e[tag=%s,limit=1]", tag)
+
+	from, err := c.GetSheepLocation(sheepID)
+	if err != nil {
+		log.Errorf("[mc] can't get sheep position: %v", err)
+		return
+	}
+	flyY := from.Y + 4
+
+	wait := func(d time.Duration) bool {
+		select {
+		case <-time.After(d):
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
 
 	go func() {
-		select {
-		case <-time.After(800 * time.Millisecond):
-			c.send(fmt.Sprintf("tp %s %d %d %d", sel, to.X, to.Y, to.Z))
-		case <-ctx.Done():
-			return
+		const (
+			stepDelay = 200 * time.Millisecond
+			steps     = 10
+		)
+
+		// Фаза 1: плавно вверх
+		for i := 1; i <= steps; i++ {
+			y := from.Y + (flyY-from.Y)*i/steps
+			c.send(fmt.Sprintf("tp %s %d %d %d", sel, from.X, y, from.Z))
+			if !wait(stepDelay) {
+				return
+			}
+		}
+
+		// Фаза 2: плавно горизонтально
+		for i := 1; i <= steps; i++ {
+			x := from.X + (to.X-from.X)*i/steps
+			z := from.Z + (to.Z-from.Z)*i/steps
+			c.send(fmt.Sprintf("tp %s %d %d %d", sel, x, flyY, z))
+			if !wait(stepDelay) {
+				return
+			}
+		}
+
+		// Фаза 3: плавно вниз
+		for i := 1; i <= steps; i++ {
+			y := flyY + (to.Y-flyY)*i/steps
+			c.send(fmt.Sprintf("tp %s %d %d %d", sel, to.X, y, to.Z))
+			if !wait(stepDelay) {
+				return
+			}
 		}
 	}()
+}
+
+func (c *Commander) DestroyAllPens(ctx context.Context, bounds minecraft.Bounds) {
+	min := bounds.Min
+	max := bounds.Max
+	c.send(fmt.Sprintf("fill %d %d %d %d %d %d air",
+		min.X, min.Y, min.Z,
+		max.X, min.Y, max.Z,
+	))
 }

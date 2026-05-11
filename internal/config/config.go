@@ -9,22 +9,17 @@ import (
 )
 
 type Config struct {
-	// OpenSearch
-	OpenSearchAddresses []string // e.g. ["http://localhost:9200"]
+	OpenSearchAddresses []string
 	OpenSearchUsername  string
 	OpenSearchPassword  string
-
-	// Minecraft RCON
-	RCONAddr     string
-	RCONPassword string
-
-	// Polling
-	PollInterval time.Duration
-
-	// Pen origin in the Minecraft world
-	PenX int
-	PenY int
-	PenZ int
+	RCONAddr            string
+	RCONPassword        string
+	PollInterval        time.Duration
+	PenAreaMinX         int
+	PenAreaMinZ         int
+	PenAreaMaxX         int
+	PenAreaMaxZ         int
+	PenAreaY            int
 }
 
 func New() (*Config, error) {
@@ -35,9 +30,11 @@ func New() (*Config, error) {
 		RCONAddr:            getEnv("RCON_ADDR", "localhost:25575"),
 		RCONPassword:        getEnv("RCON_PASSWORD", ""),
 		PollInterval:        getEnvDuration("POLL_INTERVAL", 5*time.Second),
-		PenX:                getEnvInt("PEN_X", 0),
-		PenY:                getEnvInt("PEN_Y", 100),
-		PenZ:                getEnvInt("PEN_Z", 20),
+		PenAreaMinX:         getEnvInt("PEN_AREA_MIN_X", 0),
+		PenAreaMinZ:         getEnvInt("PEN_AREA_MIN_Z", 0),
+		PenAreaMaxX:         getEnvInt("PEN_AREA_MAX_X", 100),
+		PenAreaMaxZ:         getEnvInt("PEN_AREA_MAX_Z", 100),
+		PenAreaY:            getEnvInt("PEN_AREA_Y", 100),
 	}
 
 	if cfg.RCONPassword == "" {
