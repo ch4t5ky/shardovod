@@ -1,11 +1,13 @@
 package minecraft
 
 import (
+	"context"
 	"fmt"
-	"math"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/ch4t5ky/shardovod/internal/domain/minecraft"
 	"github.com/gorcon/rcon"
 	log "github.com/sirupsen/logrus"
 )
@@ -15,21 +17,16 @@ const (
 	queueSize         = 8192
 	dialTimeout       = 5 * time.Second
 	redialDelay       = 3 * time.Second
-
-	// FlyTo animation
-	flySteps     = 14
-	flyLift      = 18 // max blocks above ground at arc peak
-	flyStepDelay = 120 * time.Millisecond
 )
 
-// Commander sends commands to a Java 1.16.5 server over RCON.
-// Commands are queued and dispatched at a safe rate.
 type Commander struct {
 	addr     string
 	password string
+	mu       sync.Mutex
 	conn     *rcon.Conn
 	queue    chan string
 	done     chan struct{}
+	wg       sync.WaitGroup
 }
 
 func NewCommander(addr, password string) *Commander {
@@ -43,10 +40,15 @@ func NewCommander(addr, password string) *Commander {
 	return c
 }
 
+// Close drains the queue, then shuts down the dispatcher and connection.
 func (c *Commander) Close() {
+	c.wg.Wait() // block until all enqueued commands are executed
 	close(c.done)
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.conn != nil {
 		c.conn.Close()
+		c.conn = nil
 	}
 }
 
@@ -57,36 +59,72 @@ func (c *Commander) dispatch() {
 		select {
 		case <-c.done:
 			return
-		case cmd := <-c.queue:
-			<-ticker.C
-			c.execWithRetry(cmd)
+		case <-ticker.C: // wait for rate-limit tick FIRST
+			select {
+			case cmd := <-c.queue:
+				c.execWithRetry(cmd)
+			default:
+				// nothing queued this tick — continue
+			}
 		}
 	}
 }
 
 func (c *Commander) execWithRetry(cmd string) {
+	defer c.wg.Done()
 	for {
+		c.mu.Lock()
 		if c.conn == nil {
 			if err := c.connect(); err != nil {
+				c.mu.Unlock()
 				log.Errorf("[mc] connect error: %v, retrying in %s", err, redialDelay)
 				time.Sleep(redialDelay)
 				continue
 			}
 		}
-		if _, err := c.conn.Execute(cmd); err != nil {
+		_, err := c.conn.Execute(cmd)
+		c.mu.Unlock()
+		if err != nil {
 			log.Errorf("[mc] execute error: %v, reconnecting", err)
+			c.mu.Lock()
 			c.conn.Close()
 			c.conn = nil
+			c.mu.Unlock()
 			continue
 		}
 		return
 	}
 }
 
+func (c *Commander) executeSync(cmd string) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for {
+		if c.conn == nil {
+			if err := c.connect(); err != nil {
+				log.Errorf("[mc] connect error: %v, retrying in %s", err, redialDelay)
+				c.mu.Unlock()
+				time.Sleep(redialDelay)
+				c.mu.Lock()
+				continue
+			}
+		}
+		resp, err := c.conn.Execute(cmd)
+		if err != nil {
+			log.Errorf("[mc] execute error: %v, reconnecting", err)
+			c.conn.Close()
+			c.conn = nil
+			continue
+		}
+		return resp, nil
+	}
+}
+
 func (c *Commander) connect() error {
 	conn, err := rcon.Dial(c.addr, c.password, rcon.SetDialTimeout(dialTimeout))
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to connect to %s: %w", c.addr, err)
 	}
 	c.conn = conn
 	log.Infof("[mc] rcon connected to %s", c.addr)
@@ -94,115 +132,34 @@ func (c *Commander) connect() error {
 }
 
 func (c *Commander) send(cmd string) {
+	c.wg.Add(1) // register before enqueue
 	select {
 	case c.queue <- cmd:
 	default:
+		c.wg.Done() // dropped — release immediately
 		log.Warn("[mc] queue full, dropping command")
 	}
 }
 
-// ---------- World commands ---------------------------------------------------
-
 func (c *Commander) SetBlock(x, y, z int, block string) {
 	c.send(fmt.Sprintf("setblock %d %d %d minecraft:%s", x, y, z, block))
-}
-
-func (c *Commander) Fill(x1, y1, z1, x2, y2, z2 int, block string) {
-	c.send(fmt.Sprintf("fill %d %d %d %d %d %d minecraft:%s", x1, y1, z1, x2, y2, z2, block))
-}
-
-func (c *Commander) PlaceSign(x, y, z int, text string) {
-	c.send(fmt.Sprintf("setblock %d %d %d minecraft:oak_sign", x, y, z))
-	c.send(fmt.Sprintf(`data merge block %d %d %d {Text1:'{"text":"%s"}'}`, x, y, z, text))
 }
 
 func (c *Commander) Say(msg string) {
 	c.send(fmt.Sprintf("say %s", msg))
 }
 
-// ---------- Sheep commands ---------------------------------------------------
-
-// SummonSheep spawns a shard sheep.
-//   - AI enabled (NoAI removed) — sheep can wander inside the hex pen
-//   - Invulnerable — players cannot kill it
-//   - Age 0 → adult (primary), Age -24000 → permanent baby (replica)
-//   - Tags: ["shardovod", "<shard-tag>"] for targeted selectors
-//   - CustomName shows shard info + doc count
-func (c *Commander) SummonSheep(key string, x, y, z, colorID int, isPrimary bool, docs int64) {
+func (c *Commander) SummonSheep(key string, x, y, z, colorID int, name string) {
 	age := 0
-	if !isPrimary {
-		age = -24000
-	}
+
 	nbt := fmt.Sprintf(
 		`{CustomName:'{"text":"%s"}',CustomNameVisible:1b,Invulnerable:1b,Color:%db,Age:%d,Tags:["shardovod","%s"]}`,
-		FormatShardName(key, docs), colorID, age, ShardTag(key),
+		name, colorID, age, CleanTag(key),
 	)
 	c.send(fmt.Sprintf("summon minecraft:sheep %d %d %d %s", x, y, z, nbt))
 }
 
-func (c *Commander) KillSheep(key string) {
-	c.send(fmt.Sprintf(
-		"kill @e[type=minecraft:sheep,tag=%s,tag=shardovod]",
-		ShardTag(key),
-	))
-}
-
-// RecolorSheep changes a sheep's wool colour in-place via NBT merge.
-func (c *Commander) RecolorSheep(key string, colorID int) {
-	c.send(fmt.Sprintf(
-		"data merge entity @e[type=minecraft:sheep,tag=%s,tag=shardovod,limit=1] {Color:%db}",
-		ShardTag(key), colorID,
-	))
-}
-
-// UpdateSheepName refreshes the floating label without killing/resummoning.
-func (c *Commander) UpdateSheepName(key string, docs int64) {
-	c.send(fmt.Sprintf(
-		`data merge entity @e[type=minecraft:sheep,tag=%s,tag=shardovod,limit=1] {CustomName:'{"text":"%s"}'}`,
-		ShardTag(key), FormatShardName(key, docs),
-	))
-}
-
-// FlyTo animates a sheep flying from one position to another along a parabolic
-// arc. Runs in a background goroutine so it does not block the sync loop.
-//
-// The sheep is first snapped to (fromX, groundY+1, fromZ) so the arc origin is
-// predictable, then 14 intermediate positions are sent at 120 ms intervals.
-func (c *Commander) FlyTo(key string, fromX, fromZ, toX, toZ, groundY int) {
-	tag := ShardTag(key)
-	go func() {
-		// Snap to the start point so arc begins from a known location.
-		c.send(fmt.Sprintf(
-			"tp @e[type=minecraft:sheep,tag=%s,tag=shardovod] %d %d %d",
-			tag, fromX, groundY+1, fromZ,
-		))
-		time.Sleep(flyStepDelay)
-
-		for i := 1; i <= flySteps; i++ {
-			t := float64(i) / float64(flySteps)
-
-			// Linear interpolation in XZ.
-			x := fromX + int(math.Round(float64(toX-fromX)*t))
-			z := fromZ + int(math.Round(float64(toZ-fromZ)*t))
-
-			// Parabolic arc in Y: sin(t*π) peaks at t=0.5.
-			lift := int(math.Round(math.Sin(t*math.Pi) * flyLift))
-			y := groundY + 1 + lift
-
-			c.send(fmt.Sprintf(
-				"tp @e[type=minecraft:sheep,tag=%s,tag=shardovod] %d %d %d",
-				tag, x, y, z,
-			))
-			time.Sleep(flyStepDelay)
-		}
-	}()
-}
-
-// ---------- Tag & display helpers --------------------------------------------
-
-// ShardTag returns a Minecraft-safe entity tag derived from the shard key.
-// Special characters are replaced so the tag works in @e[tag=…] selectors.
-func ShardTag(key string) string {
+func CleanTag(key string) string {
 	r := strings.NewReplacer(":", "_", " ", "_", ".", "_", "/", "_")
 	safe := r.Replace(key)
 	if len(safe) > 48 {
@@ -211,46 +168,114 @@ func ShardTag(key string) string {
 	return "sv_" + safe
 }
 
-// FormatShardName builds the CustomName shown above the sheep:
-// "index/shard/p (1.2k)"
-func FormatShardName(key string, docs int64) string {
-	parts := strings.Split(key, ":")
-	short := key
-	if len(parts) >= 3 {
-		short = parts[0] + "/" + parts[1] + "/" + parts[2]
-	}
-	if len(short) > 20 {
-		short = short[:20]
-	}
-	return short + " (" + FormatDocs(docs) + ")"
+// SpawnSheep implements [application.minecraftCommander].
+func (c *Commander) SpawnSheep(ctx context.Context, sheep *minecraft.Sheep, pen *minecraft.Pen) {
+	age := 0
+
+	nbt := fmt.Sprintf(
+		`{CustomName:'{"text":"%s"}',CustomNameVisible:1b,Invulnerable:1b,Color:%db,Age:%d,Tags:["shardovod","%s"]}`,
+		sheep.SheepID, sheep.Color, age, CleanTag(sheep.SheepID),
+	)
+	c.send(fmt.Sprintf("summon minecraft:sheep %d %d %d %s", sheep.Position.X, sheep.Position.Y, sheep.Position.Z, nbt))
 }
 
-// FormatDocs formats a raw doc count into a short human-readable string.
-func FormatDocs(docs int64) string {
-	switch {
-	case docs >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(docs)/1_000_000)
-	case docs >= 1_000:
-		return fmt.Sprintf("%.1fk", float64(docs)/1_000)
-	default:
-		return fmt.Sprintf("%d", docs)
-	}
+func (c *Commander) KillSheep(ctx context.Context, sheepID string) {
+	c.send(fmt.Sprintf(
+		"kill @e[type=minecraft:sheep,tag=%s,tag=shardovod]",
+		CleanTag(sheepID),
+	))
 }
 
-// ---------- Color helpers ----------------------------------------------------
+func (c *Commander) UpdateSheepColor(ctx context.Context, sheepID string, color minecraft.Color) {
+	c.send(fmt.Sprintf(
+		"data merge entity @e[type=minecraft:sheep,tag=%s,tag=shardovod,limit=1] {Color:%db}",
+		CleanTag(sheepID), int(color),
+	))
+}
 
-// ColorID maps shard state to Minecraft sheep wool colour NBT value.
-func ColorID(state string) int {
-	switch state {
-	case "STARTED":
-		return 5 // lime
-	case "INITIALIZING":
-		return 1 // orange
-	case "RELOCATING":
-		return 4 // yellow
-	case "UNASSIGNED":
-		return 15 // black
-	default:
-		return 14 // red
+func (c *Commander) SheepExistsByName(ctx context.Context, name string) (bool, error) {
+	resp, err := c.executeSync(
+		fmt.Sprintf(`execute if entity @e[type=minecraft:sheep,name="%s"]`, name),
+	)
+	if err != nil {
+		return false, err
 	}
+	return strings.Contains(resp, "Test passed"), nil
+}
+
+func (c *Commander) KillAllSheeps(ctx context.Context) {
+	c.send("kill @e[type=minecraft:sheep,tag=shardovod]")
+}
+
+func (c *Commander) BuildPen(ctx context.Context, pen *minecraft.Pen) {
+	min := pen.Bounds.Min
+	max := pen.Bounds.Max
+
+	centerZ := (min.Z + max.Z) / 2
+
+	// передняя и задняя стенки (по X, длина PenWidth=10)
+	for x := min.X; x <= max.X; x++ {
+		c.send(fmt.Sprintf("setblock %d %d %d minecraft:oak_fence", x, min.Y, min.Z))
+		c.send(fmt.Sprintf("setblock %d %d %d minecraft:oak_fence", x, min.Y, max.Z))
+	}
+
+	// боковые стенки (по Z, длина PenDepth=7) — в центре пропуск под знак
+	for z := min.Z + 1; z < max.Z; z++ {
+		c.send(fmt.Sprintf("setblock %d %d %d minecraft:oak_fence", min.X, min.Y, z))
+		c.send(fmt.Sprintf("setblock %d %d %d minecraft:oak_fence", max.X, min.Y, z))
+	}
+
+	// знак на левой боковой стенке (min.X), смотрит наружу (на запад, rotation=12)
+	c.send(fmt.Sprintf(
+		"setblock %d %d %d minecraft:oak_sign[rotation=4]",
+		min.X-1, min.Y, centerZ,
+	))
+	c.send(fmt.Sprintf(
+		`data merge block %d %d %d {Text1:'{"text":"%s"}'}`,
+		min.X-1, min.Y, centerZ, pen.Name,
+	))
+}
+
+func (c *Commander) SetPenOffline(ctx context.Context, pen *minecraft.Pen) {
+	min := pen.Bounds.Min
+	max := pen.Bounds.Max
+
+	// периметр → красное стекло
+	for x := min.X; x <= max.X; x++ {
+		c.send(fmt.Sprintf("setblock %d %d %d minecraft:red_stained_glass", x, min.Y, min.Z))
+		c.send(fmt.Sprintf("setblock %d %d %d minecraft:red_stained_glass", x, min.Y, max.Z))
+	}
+	for z := min.Z + 1; z < max.Z; z++ {
+		c.send(fmt.Sprintf("setblock %d %d %d minecraft:red_stained_glass", min.X, min.Y, z))
+		c.send(fmt.Sprintf("setblock %d %d %d minecraft:red_stained_glass", max.X, min.Y, z))
+	}
+
+	centerZ := (min.Z + max.Z) / 2
+	// знак на левой боковой стенке (min.X), смотрит наружу (на запад, rotation=12)
+	c.send(fmt.Sprintf(
+		"setblock %d %d %d minecraft:oak_sign[rotation=4]",
+		min.X-1, min.Y, centerZ,
+	))
+	c.send(fmt.Sprintf(
+		`data merge block %d %d %d {Text1:'{"text":"%s"}'}`,
+		min.X-1, min.Y, centerZ, "offline",
+	))
+}
+
+func (c *Commander) MoveSheep(ctx context.Context, sheepID string, to minecraft.Location) {
+	tag := CleanTag(sheepID)
+	flyY := to.Y + 20
+	sel := fmt.Sprintf("@e[tag=%s,limit=1]", tag)
+
+	// поднять над новым загоном
+	c.send(fmt.Sprintf("tp %s %d %d %d", sel, to.X, flyY, to.Z))
+
+	go func() {
+		select {
+		case <-time.After(800 * time.Millisecond):
+			c.send(fmt.Sprintf("tp %s %d %d %d", sel, to.X, to.Y, to.Z))
+		case <-ctx.Done():
+			return
+		}
+	}()
 }

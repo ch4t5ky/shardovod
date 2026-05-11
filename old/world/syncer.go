@@ -266,12 +266,12 @@ func (s *Syncer) buildHex(center Pos, name string) {
 	y := center.Y
 
 	// Fence perimeter at circumradius R+1 (just outside the floor).
-	for _, b := range hexPerimeterBlocks(center.X, center.Z, hexRadius+1) {
+	for _, b := range hexPerimeterBlocks(center.X, center.Z, hexRadius) {
 		s.cmd.SetBlock(b[0], y+1, b[1], "oak_fence")
 	}
 
 	// Sign above the south edge.
-	s.cmd.PlaceSign(center.X, y+1, center.Z-hexRadius-1, zoneLabel(name))
+	s.cmd.PlaceSign(center.X+hexRadius+1, y+1, center.Z, zoneLabel(name))
 }
 
 // paintDiskFloor recolors the hex floor to show disk usage.
