@@ -116,8 +116,8 @@ func (s *Syncer) onShardUpdated(ctx context.Context, prev, next *os.Shard) {
 			dest = s.pens[penID].SpawnLocation()
 			log.Infof("[syncer] move sheep %s to pen of node %s", sheepID, next.NodeID)
 		}
-		s.commander.MoveSheep(ctx, sheepID, dest)
 		sheep.Position = dest
+		s.commander.MoveSheep(ctx, sheepID, dest)
 	}
 }
 
@@ -217,15 +217,6 @@ func (s *Syncer) onNodeRemoved(ctx context.Context, node *os.Node) {
 }
 
 // ---------- Helpers ----------------------------------------------------------
-
-// unassignedLocation — точка за левым краем области загонов
-func (s *Syncer) unassignedLocation() mc.Location {
-	return mc.Location{
-		X: s.penAreaMin.X - 3,
-		Y: s.penAreaMin.Y,
-		Z: s.penAreaMin.Z - 3,
-	}
-}
 
 func (s *Syncer) findFreeLocation() (mc.Location, bool) {
 	for x := s.penAreaMin.X; x <= s.penAreaMax.X; x += 2 {

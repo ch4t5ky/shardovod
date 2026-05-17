@@ -122,6 +122,8 @@ func (s *Syncer) Bootstrap(ctx context.Context) error {
 }
 
 func (s *Syncer) tick(ctx context.Context) error {
+	s.reconcileSheepPresence(ctx)
+
 	nodes, err := s.osClient.GetNodes(ctx)
 	if err != nil {
 		log.Errorf("[syncer] failed to get nodes: %v", err)
@@ -133,7 +135,6 @@ func (s *Syncer) tick(ctx context.Context) error {
 		log.Errorf("[syncer] failed to get shards: %v", err)
 	}
 	s.reconcileShards(ctx, shards)
-	s.reconcileSheepPresence(ctx)
 
 	indices, err := s.osClient.GetIndices(ctx)
 	if err != nil {
