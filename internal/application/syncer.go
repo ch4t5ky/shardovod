@@ -9,9 +9,12 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const indicesHologramName = "shardovod_indices"
+
 type OSClient interface {
 	GetShards(ctx context.Context) ([]*opensearch.Shard, error)
 	GetNodes(ctx context.Context) ([]*opensearch.Node, error)
+	GetIndices(ctx context.Context) ([]*opensearch.Index, error)
 }
 
 type minecraftCommander interface {
@@ -25,6 +28,12 @@ type minecraftCommander interface {
 	BuildPen(ctx context.Context, pen *minecraft.Pen)
 	SetPenOffline(ctx context.Context, pen *minecraft.Pen)
 	DestroyAllPens(ctx context.Context, bounds minecraft.Bounds)
+
+	CreateHologram(ctx context.Context, name string, loc minecraft.Location)
+	AddHologramLine(ctx context.Context, name, text string)
+	SetHologramLine(ctx context.Context, name string, line int, text string)
+	DeleteHologram(ctx context.Context, name string)
+	HologramExists(ctx context.Context, name string) (bool, error)
 }
 
 type Syncer struct {
@@ -36,10 +45,14 @@ type Syncer struct {
 	penAreaMax minecraft.Location
 	penCols    int
 
-	prevShards map[string]*opensearch.Shard // shardID → Shard
-	prevNodes  map[string]*opensearch.Node  // nodeID → Node
-	sheep      map[string]*minecraft.Sheep  // sheepID → Sheep
-	pens       map[string]*minecraft.Pen    // penID → Pen
+	prevShards  map[string]*opensearch.Shard // shardID → Shard
+	prevNodes   map[string]*opensearch.Node  // nodeID → Node
+	prevIndices map[string]*opensearch.Index // indexID -> Index
+	sheep       map[string]*minecraft.Sheep  // sheepID → Sheep
+	pens        map[string]*minecraft.Pen    // penID → Pen
+
+	hologramLoc     minecraft.Location
+	indicesHologram string
 }
 
 func NewSyncer(
@@ -48,6 +61,7 @@ func NewSyncer(
 	interval time.Duration,
 	penAreaMin minecraft.Location,
 	penAreaMax minecraft.Location,
+	hologramLoc minecraft.Location,
 ) *Syncer {
 	cols := (penAreaMax.X - penAreaMin.X) / (minecraft.PenWidth + 1)
 	if cols < 1 {
@@ -55,17 +69,20 @@ func NewSyncer(
 	}
 
 	return &Syncer{
-		osClient:   osClient,
-		commander:  commander,
-		mapping:    NewMapping(),
-		interval:   interval,
-		penAreaMin: penAreaMin,
-		penAreaMax: penAreaMax,
-		penCols:    cols,
-		prevShards: make(map[string]*opensearch.Shard),
-		prevNodes:  make(map[string]*opensearch.Node),
-		sheep:      make(map[string]*minecraft.Sheep),
-		pens:       make(map[string]*minecraft.Pen),
+		osClient:        osClient,
+		commander:       commander,
+		mapping:         NewMapping(),
+		interval:        interval,
+		penAreaMin:      penAreaMin,
+		penAreaMax:      penAreaMax,
+		penCols:         cols,
+		prevShards:      make(map[string]*opensearch.Shard),
+		prevNodes:       make(map[string]*opensearch.Node),
+		prevIndices:     make(map[string]*opensearch.Index),
+		sheep:           make(map[string]*minecraft.Sheep),
+		pens:            make(map[string]*minecraft.Pen),
+		hologramLoc:     hologramLoc,
+		indicesHologram: indicesHologramName,
 	}
 }
 
@@ -108,16 +125,21 @@ func (s *Syncer) tick(ctx context.Context) error {
 	nodes, err := s.osClient.GetNodes(ctx)
 	if err != nil {
 		log.Errorf("[syncer] failed to get nodes: %v", err)
-	} else {
-		s.reconcileNodes(ctx, nodes)
 	}
+	s.reconcileNodes(ctx, nodes)
 
 	shards, err := s.osClient.GetShards(ctx)
 	if err != nil {
 		log.Errorf("[syncer] failed to get shards: %v", err)
-	} else {
-		s.reconcileShards(ctx, shards)
 	}
+	s.reconcileShards(ctx, shards)
+	s.reconcileSheepPresence(ctx)
+
+	indices, err := s.osClient.GetIndices(ctx)
+	if err != nil {
+		log.Errorf("[syncer] failed to get indices: %v", err)
+	}
+	s.reconcileIndices(ctx, indices)
 
 	return nil
 }

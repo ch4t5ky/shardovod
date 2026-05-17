@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"fmt"
 
 	mc "github.com/ch4t5ky/shardovod/internal/domain/minecraft"
 	minecraft "github.com/ch4t5ky/shardovod/internal/domain/minecraft"
@@ -37,22 +38,41 @@ func (s *Syncer) reconcileShards(ctx context.Context, shards []*os.Shard) {
 	}
 }
 
+func (s *Syncer) reconcileSheepPresence(ctx context.Context) {
+	for sheepID, sheep := range s.sheep {
+		exists, err := s.commander.SheepExistsByName(ctx, sheep.SheepID)
+		if err != nil {
+			log.Errorf("[syncer] check sheep %s: %v", sheepID, err)
+			continue
+		}
+		if !exists {
+			log.Infof("[syncer] sheep %s missing, respawning", sheepID)
+			s.commander.SpawnSheep(ctx, sheep)
+		}
+	}
+}
+
 func (s *Syncer) onShardAdded(ctx context.Context, shard *os.Shard) {
 	sheepID := shard.ShardID
 	var spawnLoc mc.Location
+
 	if shard.IsUnassigned() {
-		spawnLoc = s.unassignedLocation()
+		loc, ok := s.findFreeLocation()
+		if !ok {
+			log.Warnf("[syncer] no free location for unassigned shard %s", shard.ShardID)
+			return
+		}
+		spawnLoc = loc
 	} else {
 		penID, ok := s.mapping.PenByNode(shard.NodeID)
 		if !ok {
 			log.Warnf("[syncer] no pen for node %s on shard add", shard.NodeID)
-			spawnLoc = s.unassignedLocation()
-		} else {
-			spawnLoc = s.pens[penID].SpawnLocation()
+			return
 		}
+		spawnLoc = s.pens[penID].SpawnLocation()
 	}
 
-	sheep := minecraft.NewSheep(sheepID, "", shard.ShardID, spawnLoc) // убрали origin
+	sheep := minecraft.NewSheep(sheepID, "", shard.ShardID, spawnLoc)
 	sheep.Color = SheepColor(shard.State, shard.IsPrimary())
 
 	s.sheep[sheepID] = sheep
@@ -80,7 +100,12 @@ func (s *Syncer) onShardUpdated(ctx context.Context, prev, next *os.Shard) {
 	if prev.NodeID != next.NodeID {
 		var dest mc.Location
 		if next.IsUnassigned() {
-			dest = s.unassignedLocation()
+			loc, ok := s.findFreeLocation()
+			if !ok {
+				log.Warnf("[syncer] no free location for unassigned sheep %s", sheepID)
+				return
+			}
+			dest = loc
 			log.Infof("[syncer] move sheep %s to unassigned zone", sheepID)
 		} else {
 			penID, ok := s.mapping.PenByNode(next.NodeID)
@@ -92,6 +117,7 @@ func (s *Syncer) onShardUpdated(ctx context.Context, prev, next *os.Shard) {
 			log.Infof("[syncer] move sheep %s to pen of node %s", sheepID, next.NodeID)
 		}
 		s.commander.MoveSheep(ctx, sheepID, dest)
+		sheep.Position = dest
 	}
 }
 
@@ -192,20 +218,6 @@ func (s *Syncer) onNodeRemoved(ctx context.Context, node *os.Node) {
 
 // ---------- Helpers ----------------------------------------------------------
 
-func (s *Syncer) resolve(shard *os.Shard) (*mc.Sheep, *mc.Pen, bool) {
-	sheepID, ok := s.mapping.SheepByShard(shard.ShardID)
-	if !ok {
-		log.Warnf("[syncer] no sheep for shard %s", shard.ShardID)
-		return nil, nil, false
-	}
-	penID, ok := s.mapping.PenByNode(shard.NodeID)
-	if !ok {
-		log.Warnf("[syncer] no pen for node %s", shard.NodeID)
-		return nil, nil, false
-	}
-	return s.sheep[sheepID], s.pens[penID], true
-}
-
 // unassignedLocation — точка за левым краем области загонов
 func (s *Syncer) unassignedLocation() mc.Location {
 	return mc.Location{
@@ -213,6 +225,27 @@ func (s *Syncer) unassignedLocation() mc.Location {
 		Y: s.penAreaMin.Y,
 		Z: s.penAreaMin.Z - 3,
 	}
+}
+
+func (s *Syncer) findFreeLocation() (mc.Location, bool) {
+	for x := s.penAreaMin.X; x <= s.penAreaMax.X; x += 2 {
+		for z := s.penAreaMin.Z; z <= s.penAreaMax.Z; z += 2 {
+			loc := mc.Location{X: x, Y: s.penAreaMin.Y, Z: z}
+			if !s.isOccupied(loc) {
+				return loc, true
+			}
+		}
+	}
+	return mc.Location{}, false
+}
+
+func (s *Syncer) isOccupied(loc mc.Location) bool {
+	for _, pen := range s.pens {
+		if pen.Bounds.Contains(loc) {
+			return true
+		}
+	}
+	return false
 }
 
 func indexShards(shards []*os.Shard) map[string]*os.Shard {
@@ -231,4 +264,67 @@ func indexNodes(nodes []*os.Node) map[string]*os.Node {
 		}
 	}
 	return idx
+}
+
+// ---------- Indices ------------------------------------------------------------
+func (s *Syncer) reconcileIndices(ctx context.Context, indices []*opensearch.Index) {
+	current := indexIndices(indices)
+
+	visible := make([]*opensearch.Index, 0, len(indices))
+	for _, idx := range indices {
+		if !idx.IsSystem() {
+			visible = append(visible, idx)
+		}
+	}
+
+	prevVisible := make([]*opensearch.Index, 0, len(s.prevIndices))
+	for _, idx := range s.prevIndices {
+		if !idx.IsSystem() {
+			prevVisible = append(prevVisible, idx)
+		}
+	}
+
+	if len(s.prevIndices) == 0 {
+		// первый тик — создаём
+		s.commander.DeleteHologram(ctx, indicesHologramName)
+		s.createIndicesHologram(ctx, visible)
+	} else if len(visible) != len(prevVisible) {
+		// количество изменилось — пересоздаём
+		s.commander.DeleteHologram(ctx, indicesHologramName)
+		s.createIndicesHologram(ctx, visible)
+	} else {
+		// количество то же — обновляем только изменившиеся строки
+		// строки голограммы: 1=заголовок, 2..N=индексы
+		for i, idx := range visible {
+			prev, ok := s.prevIndices[idx.Id]
+			if !ok || prev.Health != idx.Health || prev.DocsCount != idx.DocsCount || prev.Size != idx.Size {
+				s.commander.SetHologramLine(ctx, indicesHologramName, i+2, formatIndexLine(idx))
+			}
+		}
+	}
+
+	s.prevIndices = current
+}
+
+func indexIndices(indices []*os.Index) map[string]*os.Index {
+	idx := make(map[string]*os.Index, len(indices))
+	for _, ind := range indices {
+		idx[ind.Id] = ind
+	}
+	return idx
+}
+
+func (s *Syncer) createIndicesHologram(ctx context.Context, indices []*opensearch.Index) {
+	s.commander.CreateHologram(ctx, indicesHologramName, s.hologramLoc)
+	// первая строка уже создана — задаём заголовок через set
+	s.commander.SetHologramLine(ctx, indicesHologramName, 1, "<#00BFFF>Indices</#4B0082>")
+	// остальные строки добавляем через add
+	for _, idx := range indices {
+		s.commander.AddHologramLine(ctx, indicesHologramName, formatIndexLine(idx))
+	}
+}
+
+func formatIndexLine(idx *opensearch.Index) string {
+	color := healthColor(idx.Health)
+	return fmt.Sprintf("%s%s &#AAAAAA%d docs %s", color, idx.Name, idx.DocsCount, idx.Size)
 }

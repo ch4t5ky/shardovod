@@ -16,15 +16,23 @@ func main() {
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
+	log.Infof("config: %v", err)
 	ctx := context.Background()
 
-	mcComm := minecraft.NewCommander(cfg.RCONAddr, cfg.RCONPassword)
-	defer mcComm.Close()
+	ops, err := opensearch.NewOpensearch(
+		cfg.OpenSearchAddresses,
+		cfg.OpenSearchUsername,
+		cfg.OpenSearchPassword,
+		cfg.OpenSearchClientCertPath,
+		cfg.OpenSearchClientKeyPath,
+	)
 
-	ops, err := opensearch.NewOpensearch(cfg.OpenSearchAddresses, cfg.OpenSearchUsername, cfg.OpenSearchPassword)
 	if err != nil {
 		log.Fatalf("failed to create client: %v", err)
 	}
+
+	mcComm := minecraft.NewCommander(cfg.RCONAddr, cfg.RCONPassword)
+	defer mcComm.Close()
 
 	log.Infof("pen area: min=(%d,%d) max=(%d,%d) y=%d",
 		cfg.PenAreaMinX, cfg.PenAreaMinZ,
@@ -38,6 +46,7 @@ func main() {
 		cfg.PollInterval,
 		mc.Location{X: cfg.PenAreaMinX, Y: cfg.PenAreaY, Z: cfg.PenAreaMinZ},
 		mc.Location{X: cfg.PenAreaMaxX, Y: cfg.PenAreaY, Z: cfg.PenAreaMaxZ},
+		mc.Location{X: cfg.IndicesHologramX, Y: cfg.IndicesHologramY, Z: cfg.IndicesHologramZ},
 	)
 
 	// восстанавливаем маппинг из мира

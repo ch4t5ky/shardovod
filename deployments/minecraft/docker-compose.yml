@@ -1,6 +1,6 @@
 services:
   minecraft:
-    image: itzg/minecraft-server:stable-java8
+    image: itzg/minecraft-server:stable-java16
     container_name: minecraft
     restart: unless-stopped
     ports:
@@ -14,7 +14,7 @@ services:
       ONLINE_MODE: "false"
       # Pin to exactly 1.16.5
       VERSION: "1.16.5"
-      TYPE: "FORGE"
+      TYPE: "PAPER"
 
       # Server settings
       DIFFICULTY: "peaceful"       # no hostile mobs — cleaner workshop env

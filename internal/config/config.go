@@ -9,36 +9,54 @@ import (
 )
 
 type Config struct {
-	OpenSearchAddresses []string
-	OpenSearchUsername  string
-	OpenSearchPassword  string
-	RCONAddr            string
-	RCONPassword        string
-	PollInterval        time.Duration
-	PenAreaMinX         int
-	PenAreaMinZ         int
-	PenAreaMaxX         int
-	PenAreaMaxZ         int
-	PenAreaY            int
+	OpenSearchAddresses      []string
+	OpenSearchUsername       string
+	OpenSearchPassword       string
+	OpenSearchClientCertPath string
+	OpenSearchClientKeyPath  string
+
+	RCONAddr     string
+	RCONPassword string
+	PollInterval time.Duration
+
+	PenAreaMinX int
+	PenAreaMinZ int
+	PenAreaMaxX int
+	PenAreaMaxZ int
+	PenAreaY    int
+
+	IndicesHologramX int
+	IndicesHologramY int
+	IndicesHologramZ int
 }
 
 func New() (*Config, error) {
 	cfg := &Config{
-		OpenSearchAddresses: getEnvList("OPENSEARCH_ADDRESSES", []string{"http://localhost:9200"}),
-		OpenSearchUsername:  getEnv("OPENSEARCH_USERNAME", ""),
-		OpenSearchPassword:  getEnv("OPENSEARCH_PASSWORD", ""),
-		RCONAddr:            getEnv("RCON_ADDR", "localhost:25575"),
-		RCONPassword:        getEnv("RCON_PASSWORD", ""),
-		PollInterval:        getEnvDuration("POLL_INTERVAL", 5*time.Second),
-		PenAreaMinX:         getEnvInt("PEN_AREA_MIN_X", 0),
-		PenAreaMinZ:         getEnvInt("PEN_AREA_MIN_Z", 0),
-		PenAreaMaxX:         getEnvInt("PEN_AREA_MAX_X", 100),
-		PenAreaMaxZ:         getEnvInt("PEN_AREA_MAX_Z", 100),
-		PenAreaY:            getEnvInt("PEN_AREA_Y", 100),
+		OpenSearchAddresses:      getEnvList("OPENSEARCH_ADDRESSES", []string{"http://localhost:9200"}),
+		OpenSearchUsername:       getEnv("OPENSEARCH_USERNAME", ""),
+		OpenSearchPassword:       getEnv("OPENSEARCH_PASSWORD", ""),
+		OpenSearchClientCertPath: getEnv("OPENSEARCH_CLIENT_CERT_PATH", ""),
+		OpenSearchClientKeyPath:  getEnv("OPENSEARCH_CLIENT_KEY_PATH", ""),
+
+		RCONAddr:         getEnv("RCON_ADDR", "localhost:25575"),
+		RCONPassword:     getEnv("RCON_PASSWORD", ""),
+		PollInterval:     getEnvDuration("POLL_INTERVAL", 5*time.Second),
+		PenAreaMinX:      getEnvInt("PEN_AREA_MIN_X", 0),
+		PenAreaMinZ:      getEnvInt("PEN_AREA_MIN_Z", 0),
+		PenAreaMaxX:      getEnvInt("PEN_AREA_MAX_X", 100),
+		PenAreaMaxZ:      getEnvInt("PEN_AREA_MAX_Z", 100),
+		PenAreaY:         getEnvInt("PEN_AREA_Y", 100),
+		IndicesHologramX: getEnvInt("HOLOGRAM_INDICES_X", 0),
+		IndicesHologramY: getEnvInt("HOLOGRAM_INDICES_Y", 10),
+		IndicesHologramZ: getEnvInt("HOLOGRAM_INDICES_Z", 0),
 	}
 
 	if cfg.RCONPassword == "" {
 		return nil, fmt.Errorf("RCON_PASSWORD is required")
+	}
+
+	if (cfg.OpenSearchClientCertPath == "") != (cfg.OpenSearchClientKeyPath == "") {
+		return nil, fmt.Errorf("OPENSEARCH_CLIENT_CERT_PATH and OPENSEARCH_CLIENT_KEY_PATH must be set together")
 	}
 
 	return cfg, nil

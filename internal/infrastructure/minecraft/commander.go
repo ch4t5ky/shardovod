@@ -347,3 +347,30 @@ func (c *Commander) DestroyAllPens(ctx context.Context, bounds minecraft.Bounds)
 		max.X, min.Y, max.Z,
 	))
 }
+
+func (c *Commander) CreateHologram(ctx context.Context, name string, loc minecraft.Location) {
+	c.send(fmt.Sprintf("dh h create %s -l:world:%d:%d:%d",
+		CleanTag(name), loc.X, loc.Y, loc.Z,
+	))
+}
+
+func (c *Commander) AddHologramLine(ctx context.Context, name, text string) {
+	c.send(fmt.Sprintf("dh lines add %s 1 %s", CleanTag(name), text))
+}
+
+// SetHologramLine обновляет строку по номеру (1-based).
+func (c *Commander) SetHologramLine(ctx context.Context, name string, line int, text string) {
+	c.send(fmt.Sprintf("dh lines set %s 1 %d %s", CleanTag(name), line, text))
+}
+
+func (c *Commander) DeleteHologram(ctx context.Context, name string) {
+	c.send(fmt.Sprintf("dh holograms delete %s", CleanTag(name)))
+}
+
+func (c *Commander) HologramExists(ctx context.Context, name string) (bool, error) {
+	resp, err := c.executeSync(fmt.Sprintf("dh info %s", CleanTag(name)))
+	if err != nil {
+		return false, err
+	}
+	return !strings.Contains(resp, "doesn't exist"), nil
+}

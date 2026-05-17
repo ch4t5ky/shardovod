@@ -22,3 +22,16 @@ func SheepColor(state opensearch.ShardState, isPrimary bool) minecraft.Color {
 		return minecraft.ColorRed
 	}
 }
+
+func healthColor(h opensearch.IndexHealth) string {
+	switch h {
+	case opensearch.IndexHealthGreen:
+		return "&#00FF00"
+	case opensearch.IndexHealthYellow:
+		return "&#FFAA00"
+	case opensearch.IndexHealthRed:
+		return "&#FF3333"
+	default:
+		return "&#AAAAAA"
+	}
+}

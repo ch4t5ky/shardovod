@@ -17,14 +17,30 @@ type OpensearchClient struct {
 	client *opensearchapi.Client
 }
 
-func NewOpensearch(addresses []string, username, password string) (*OpensearchClient, error) {
+func NewOpensearch(
+	addresses []string,
+	username, password string,
+	clientCertPath, clientKeyPath string,
+) (*OpensearchClient, error) {
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: true, // только если реально нужно
+	}
+
+	// Клиентский сертификат + ключ
+	if clientCertPath != "" && clientKeyPath != "" {
+		cert, err := tls.LoadX509KeyPair(clientCertPath, clientKeyPath)
+		if err != nil {
+			log.Errorf("failed to load client certificate: %s", err.Error())
+			return nil, err
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+
 	client, err := opensearchapi.NewClient(
 		opensearchapi.Config{
 			Client: opensearch.Config{
 				Transport: &http.Transport{
-					TLSClientConfig: &tls.Config{
-						InsecureSkipVerify: true,
-					},
+					TLSClientConfig: tlsConfig,
 				},
 				Addresses: addresses,
 				Username:  username,
@@ -96,4 +112,26 @@ func parseRole(raw string) ops.NodeRole {
 	default:
 		return ops.NodeRoleCoordinator
 	}
+}
+
+func (c *OpensearchClient) GetIndices(ctx context.Context) ([]*ops.Index, error) {
+	resp, err := c.client.Cat.Indices(ctx, &opensearchapi.CatIndicesReq{})
+	if err != nil {
+		return nil, fmt.Errorf("cat indices: %w", err)
+	}
+
+	indices := make([]*ops.Index, 0, len(resp.Indices))
+	docsCount := 0
+	size := ""
+	for _, ind := range resp.Indices {
+		if ind.DocsCount != nil {
+			docsCount = *ind.DocsCount
+		}
+
+		if ind.StoreSize != nil {
+			size = *ind.StoreSize
+		}
+		indices = append(indices, ops.NewIndex(ind.UUID, ind.Index, ops.IndexHealth(ind.Health), docsCount, size))
+	}
+	return indices, nil
 }
