@@ -207,61 +207,6 @@ func (c *Commander) KillAllSheeps(ctx context.Context) {
 	c.send("kill @e[type=minecraft:sheep,tag=shardovod]")
 }
 
-func (c *Commander) BuildPen(ctx context.Context, pen *minecraft.Pen) {
-	min := pen.Bounds.Min
-	max := pen.Bounds.Max
-
-	centerZ := (min.Z + max.Z) / 2
-
-	// передняя и задняя стенки (по X, длина PenWidth=10)
-	for x := min.X; x <= max.X; x++ {
-		c.send(fmt.Sprintf("setblock %d %d %d minecraft:oak_fence", x, min.Y, min.Z))
-		c.send(fmt.Sprintf("setblock %d %d %d minecraft:oak_fence", x, min.Y, max.Z))
-	}
-
-	// боковые стенки (по Z, длина PenDepth=7) — в центре пропуск под знак
-	for z := min.Z + 1; z < max.Z; z++ {
-		c.send(fmt.Sprintf("setblock %d %d %d minecraft:oak_fence", min.X, min.Y, z))
-		c.send(fmt.Sprintf("setblock %d %d %d minecraft:oak_fence", max.X, min.Y, z))
-	}
-
-	// знак на левой боковой стенке (min.X), смотрит наружу (на запад, rotation=12)
-	c.send(fmt.Sprintf(
-		"setblock %d %d %d minecraft:oak_sign[rotation=4]",
-		min.X-1, min.Y, centerZ,
-	))
-	c.send(fmt.Sprintf(
-		`data merge block %d %d %d {Text1:'{"text":"%s"}'}`,
-		min.X-1, min.Y, centerZ, pen.Name,
-	))
-}
-
-func (c *Commander) SetPenOffline(ctx context.Context, pen *minecraft.Pen) {
-	min := pen.Bounds.Min
-	max := pen.Bounds.Max
-
-	// периметр → красное стекло
-	for x := min.X; x <= max.X; x++ {
-		c.send(fmt.Sprintf("setblock %d %d %d minecraft:red_stained_glass", x, min.Y, min.Z))
-		c.send(fmt.Sprintf("setblock %d %d %d minecraft:red_stained_glass", x, min.Y, max.Z))
-	}
-	for z := min.Z + 1; z < max.Z; z++ {
-		c.send(fmt.Sprintf("setblock %d %d %d minecraft:red_stained_glass", min.X, min.Y, z))
-		c.send(fmt.Sprintf("setblock %d %d %d minecraft:red_stained_glass", max.X, min.Y, z))
-	}
-
-	centerZ := (min.Z + max.Z) / 2
-	// знак на левой боковой стенке (min.X), смотрит наружу (на запад, rotation=12)
-	c.send(fmt.Sprintf(
-		"setblock %d %d %d minecraft:oak_sign[rotation=4]",
-		min.X-1, min.Y, centerZ,
-	))
-	c.send(fmt.Sprintf(
-		`data merge block %d %d %d {Text1:'{"text":"%s"}'}`,
-		min.X-1, min.Y, centerZ, "offline",
-	))
-}
-
 func (c *Commander) GetSheepLocation(sheepID string) (minecraft.Location, error) {
 	tag := CleanTag(sheepID)
 	sel := fmt.Sprintf("@e[tag=%s,limit=1]", tag)
@@ -337,6 +282,61 @@ func (c *Commander) MoveSheep(ctx context.Context, sheepID string, to minecraft.
 			}
 		}
 	}()
+}
+
+func (c *Commander) BuildPen(ctx context.Context, pen *minecraft.Pen) {
+	min := pen.Bounds.Min
+	max := pen.Bounds.Max
+
+	centerZ := (min.Z + max.Z) / 2
+
+	// передняя и задняя стенки (по X, длина PenWidth=10)
+	for x := min.X; x <= max.X; x++ {
+		c.send(fmt.Sprintf("setblock %d %d %d minecraft:oak_fence", x, min.Y, min.Z))
+		c.send(fmt.Sprintf("setblock %d %d %d minecraft:oak_fence", x, min.Y, max.Z))
+	}
+
+	// боковые стенки (по Z, длина PenDepth=7) — в центре пропуск под знак
+	for z := min.Z + 1; z < max.Z; z++ {
+		c.send(fmt.Sprintf("setblock %d %d %d minecraft:oak_fence", min.X, min.Y, z))
+		c.send(fmt.Sprintf("setblock %d %d %d minecraft:oak_fence", max.X, min.Y, z))
+	}
+
+	// знак на левой боковой стенке (min.X), смотрит наружу (на запад, rotation=12)
+	c.send(fmt.Sprintf(
+		"setblock %d %d %d minecraft:oak_sign[rotation=4]",
+		min.X-1, min.Y, centerZ,
+	))
+	c.send(fmt.Sprintf(
+		`data merge block %d %d %d {Text1:'{"text":"%s"}'}`,
+		min.X-1, min.Y, centerZ, pen.Name,
+	))
+}
+
+func (c *Commander) SetPenOffline(ctx context.Context, pen *minecraft.Pen) {
+	min := pen.Bounds.Min
+	max := pen.Bounds.Max
+
+	// периметр → красное стекло
+	for x := min.X; x <= max.X; x++ {
+		c.send(fmt.Sprintf("setblock %d %d %d minecraft:red_stained_glass", x, min.Y, min.Z))
+		c.send(fmt.Sprintf("setblock %d %d %d minecraft:red_stained_glass", x, min.Y, max.Z))
+	}
+	for z := min.Z + 1; z < max.Z; z++ {
+		c.send(fmt.Sprintf("setblock %d %d %d minecraft:red_stained_glass", min.X, min.Y, z))
+		c.send(fmt.Sprintf("setblock %d %d %d minecraft:red_stained_glass", max.X, min.Y, z))
+	}
+
+	centerZ := (min.Z + max.Z) / 2
+	// знак на левой боковой стенке (min.X), смотрит наружу (на запад, rotation=12)
+	c.send(fmt.Sprintf(
+		"setblock %d %d %d minecraft:oak_sign[rotation=4]",
+		min.X-1, min.Y, centerZ,
+	))
+	c.send(fmt.Sprintf(
+		`data merge block %d %d %d {Text1:'{"text":"%s"}'}`,
+		min.X-1, min.Y, centerZ, "offline",
+	))
 }
 
 func (c *Commander) DestroyAllPens(ctx context.Context, bounds minecraft.Bounds) {
