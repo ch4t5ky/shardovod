@@ -16,9 +16,9 @@ func NewMapping() *Mapping {
 	}
 }
 
-func (m *Mapping) BindNode(penID, nodeID string) {
-	m.penToNode[penID] = nodeID
-	m.nodeToPen[nodeID] = penID
+func (m *Mapping) BindNode(penID, nodeName string) {
+	m.penToNode[penID] = nodeName
+	m.nodeToPen[nodeName] = penID
 }
 
 func (m *Mapping) BindShard(sheepID, shardID string) {
@@ -31,8 +31,8 @@ func (m *Mapping) NodeByPen(penID string) (string, bool) {
 	return id, ok
 }
 
-func (m *Mapping) PenByNode(nodeID string) (string, bool) {
-	id, ok := m.nodeToPen[nodeID]
+func (m *Mapping) PenByNode(nodeName string) (string, bool) {
+	id, ok := m.nodeToPen[nodeName]
 	return id, ok
 }
 

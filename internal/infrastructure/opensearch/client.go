@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
-	"strings"
 
 	ops "github.com/ch4t5ky/shardovod/internal/domain/opensearch"
 	"github.com/opensearch-project/opensearch-go/v4"
@@ -67,9 +66,9 @@ func (c *OpensearchClient) GetShards(ctx context.Context) ([]*ops.Shard, error) 
 	replicaIdx := make(map[string]int) // "index:shardNum" → счётчик
 
 	for _, s := range resp.Shards {
-		nodeID := ""
+		node := ""
 		if s.Node != nil {
-			nodeID = *s.Node
+			node = *s.Node
 		}
 
 		role := "p"
@@ -79,7 +78,7 @@ func (c *OpensearchClient) GetShards(ctx context.Context) ([]*ops.Shard, error) 
 			role = fmt.Sprintf("r%d", replicaIdx[key])
 		}
 
-		shard := ops.NewShard(s.Index, s.Shard, role, nodeID, ops.ShardState(s.State))
+		shard := ops.NewShard(s.Index, s.Shard, role, node, ops.ShardState(s.State))
 		shards = append(shards, shard)
 	}
 
@@ -87,31 +86,62 @@ func (c *OpensearchClient) GetShards(ctx context.Context) ([]*ops.Shard, error) 
 }
 
 func (c *OpensearchClient) GetNodes(ctx context.Context) ([]*ops.Node, error) {
-	resp, err := c.client.Cat.Nodes(ctx, &opensearchapi.CatNodesReq{})
+	resp, err := c.client.Nodes.Info(ctx, &opensearchapi.NodesInfoReq{Params: opensearchapi.NodesInfoParams{}})
 	if err != nil {
 		return nil, fmt.Errorf("cat nodes: %w", err)
 	}
 
 	nodes := make([]*ops.Node, 0, len(resp.Nodes))
-	for _, n := range resp.Nodes {
-		nodes = append(nodes, ops.NewNode(n.Name, n.Name, parseRole(n.Role)))
+
+	for id, n := range resp.Nodes {
+		role := parseRole(n.Roles)
+		if role != ops.NodeRoleData {
+			continue
+		}
+		nodes = append(nodes, ops.NewNode(id, n.Name, role))
 	}
 
 	return nodes, nil
 }
 
-// parseRole парсит поле node.role из CAT API
-// Строка вида "dimr": d=data, i=ingest, m=master, r=remote_cluster
-// Координирующая нода не имеет ролей → "-"
-func parseRole(raw string) ops.NodeRole {
-	switch {
-	case strings.Contains(raw, "m"):
-		return ops.NodeRoleMaster
-	case strings.Contains(raw, "d"):
-		return ops.NodeRoleData
-	default:
-		return ops.NodeRoleCoordinator
+func parseRole(roles []string) ops.NodeRole {
+	for _, r := range roles {
+		if r == "data" {
+			return ops.NodeRoleData
+		}
 	}
+	for _, r := range roles {
+		if r == "master" || r == "cluster_manager" {
+			return ops.NodeRoleMaster
+		}
+	}
+	return ops.NodeRoleCoordinator
+}
+
+func (c *OpensearchClient) GetNodeStats(ctx context.Context, nodeID string) (*ops.NodeStats, error) {
+	resp, err := c.client.Nodes.Stats(ctx, &opensearchapi.NodesStatsReq{
+		NodeID: []string{nodeID},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("node stats %s: %w", nodeID, err)
+	}
+
+	n, ok := resp.Nodes[nodeID]
+	if !ok {
+		return nil, fmt.Errorf("node %s not found in stats response", nodeID)
+	}
+
+	diskUsed := n.FS.Total.TotalInBytes - n.FS.Total.AvailableInBytes
+	diskPct := 0
+	if n.FS.Total.TotalInBytes > 0 {
+		diskPct = int(diskUsed * 100 / n.FS.Total.TotalInBytes)
+	}
+
+	return &ops.NodeStats{
+		CPUPercent:  n.OS.CPU.Percent,
+		HeapPercent: n.JVM.Mem.HeapUsedPercent,
+		DiskPercent: diskPct,
+	}, nil
 }
 
 func (c *OpensearchClient) GetIndices(ctx context.Context) ([]*ops.Index, error) {
@@ -134,4 +164,21 @@ func (c *OpensearchClient) GetIndices(ctx context.Context) ([]*ops.Index, error)
 		indices = append(indices, ops.NewIndex(ind.UUID, ind.Index, ops.IndexHealth(ind.Health), docsCount, size))
 	}
 	return indices, nil
+}
+
+func (c *OpensearchClient) GetClusterSettings(ctx context.Context) (*ops.ClusterSettings, error) {
+	_, err := c.client.Cluster.GetSettings(ctx, &opensearchapi.ClusterGetSettingsReq{
+		Params: opensearchapi.ClusterGetSettingsParams{
+			IncludeDefaults: opensearchapi.ToPointer(true),
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("cluster settings: %w", err)
+	}
+
+	settings := &ops.ClusterSettings{
+		MaxShardsPerNode: 1000, // fallback
+	}
+
+	return settings, nil
 }

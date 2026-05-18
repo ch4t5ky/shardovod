@@ -37,3 +37,10 @@ func (n *Node) RemoveShard(shardID string) {
 	}
 	n.ShardIDs = filtered
 }
+
+type NodeStats struct {
+	CPUPercent  int
+	HeapPercent int
+	DiskPercent int
+	ShardCount  int
+}

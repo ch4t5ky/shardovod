@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/ch4t5ky/shardovod/internal/domain/minecraft"
@@ -22,91 +21,32 @@ const (
 type Commander struct {
 	addr     string
 	password string
-	mu       sync.Mutex
 	conn     *rcon.Conn
-	queue    chan string
-	done     chan struct{}
-	wg       sync.WaitGroup
 }
 
 func NewCommander(addr, password string) *Commander {
 	c := &Commander{
 		addr:     addr,
 		password: password,
-		queue:    make(chan string, queueSize),
-		done:     make(chan struct{}),
 	}
-	go c.dispatch()
 	return c
 }
 
 // Close drains the queue, then shuts down the dispatcher and connection.
 func (c *Commander) Close() {
-	c.wg.Wait() // block until all enqueued commands are executed
-	close(c.done)
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.conn != nil {
 		c.conn.Close()
 		c.conn = nil
 	}
 }
 
-func (c *Commander) dispatch() {
-	ticker := time.NewTicker(time.Second / commandsPerSecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-c.done:
-			return
-		case <-ticker.C: // wait for rate-limit tick FIRST
-			select {
-			case cmd := <-c.queue:
-				c.execWithRetry(cmd)
-			default:
-				// nothing queued this tick — continue
-			}
-		}
-	}
-}
-
-func (c *Commander) execWithRetry(cmd string) {
-	defer c.wg.Done()
-	for {
-		c.mu.Lock()
-		if c.conn == nil {
-			if err := c.connect(); err != nil {
-				c.mu.Unlock()
-				log.Errorf("[mc] connect error: %v, retrying in %s", err, redialDelay)
-				time.Sleep(redialDelay)
-				continue
-			}
-		}
-		_, err := c.conn.Execute(cmd)
-		c.mu.Unlock()
-		if err != nil {
-			log.Errorf("[mc] execute error: %v, reconnecting", err)
-			c.mu.Lock()
-			c.conn.Close()
-			c.conn = nil
-			c.mu.Unlock()
-			continue
-		}
-		return
-	}
-}
-
 func (c *Commander) executeSync(cmd string) (string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	for {
 		if c.conn == nil {
 			if err := c.connect(); err != nil {
 				log.Errorf("[mc] connect error: %v, retrying in %s", err, redialDelay)
-				c.mu.Unlock()
 				time.Sleep(redialDelay)
-				c.mu.Lock()
 				continue
 			}
 		}
@@ -131,22 +71,8 @@ func (c *Commander) connect() error {
 	return nil
 }
 
-func (c *Commander) send(cmd string) {
-	c.wg.Add(1) // register before enqueue
-	select {
-	case c.queue <- cmd:
-	default:
-		c.wg.Done() // dropped — release immediately
-		log.Warn("[mc] queue full, dropping command")
-	}
-}
-
 func (c *Commander) SetBlock(x, y, z int, block string) {
-	c.send(fmt.Sprintf("setblock %d %d %d minecraft:%s", x, y, z, block))
-}
-
-func (c *Commander) Say(msg string) {
-	c.send(fmt.Sprintf("say %s", msg))
+	c.executeSync(fmt.Sprintf("setblock %d %d %d minecraft:%s", x, y, z, block))
 }
 
 func (c *Commander) SummonSheep(key string, x, y, z, colorID int, name string) {
@@ -156,7 +82,7 @@ func (c *Commander) SummonSheep(key string, x, y, z, colorID int, name string) {
 		`{CustomName:'{"text":"%s"}',CustomNameVisible:1b,Invulnerable:1b,Color:%db,Age:%d,Tags:["shardovod","%s"]}`,
 		name, colorID, age, CleanTag(key),
 	)
-	c.send(fmt.Sprintf("summon minecraft:sheep %d %d %d %s", x, y, z, nbt))
+	c.executeSync(fmt.Sprintf("summon minecraft:sheep %d %d %d %s", x, y, z, nbt))
 }
 
 func CleanTag(key string) string {
@@ -176,18 +102,18 @@ func (c *Commander) SpawnSheep(ctx context.Context, sheep *minecraft.Sheep) {
 		`{CustomName:'{"text":"%s"}',CustomNameVisible:1b,Invulnerable:1b,Color:%db,Age:%d,Tags:["shardovod","%s"]}`,
 		sheep.SheepID, sheep.Color, age, CleanTag(sheep.SheepID),
 	)
-	c.send(fmt.Sprintf("summon minecraft:sheep %d %d %d %s", sheep.Position.X, sheep.Position.Y, sheep.Position.Z, nbt))
+	c.executeSync(fmt.Sprintf("summon minecraft:sheep %d %d %d %s", sheep.Position.X, sheep.Position.Y, sheep.Position.Z, nbt))
 }
 
 func (c *Commander) KillSheep(ctx context.Context, sheepID string) {
-	c.send(fmt.Sprintf(
+	c.executeSync(fmt.Sprintf(
 		"kill @e[type=minecraft:sheep,tag=%s,tag=shardovod]",
 		CleanTag(sheepID),
 	))
 }
 
 func (c *Commander) UpdateSheepColor(ctx context.Context, sheepID string, color minecraft.Color) {
-	c.send(fmt.Sprintf(
+	c.executeSync(fmt.Sprintf(
 		"data merge entity @e[type=minecraft:sheep,tag=%s,tag=shardovod,limit=1] {Color:%db}",
 		CleanTag(sheepID), int(color),
 	))
@@ -204,7 +130,7 @@ func (c *Commander) SheepExistsByName(ctx context.Context, name string) (bool, e
 }
 
 func (c *Commander) KillAllSheeps(ctx context.Context) {
-	c.send("kill @e[type=minecraft:sheep,tag=shardovod]")
+	c.executeSync("kill @e[type=minecraft:sheep,tag=shardovod]")
 }
 
 func (c *Commander) GetSheepLocation(sheepID string) (minecraft.Location, error) {
@@ -257,7 +183,7 @@ func (c *Commander) MoveSheep(ctx context.Context, sheepID string, to minecraft.
 		// Фаза 1: плавно вверх
 		for i := 1; i <= steps; i++ {
 			y := from.Y + (flyY-from.Y)*i/steps
-			c.send(fmt.Sprintf("tp %s %d %d %d", sel, from.X, y, from.Z))
+			c.executeSync(fmt.Sprintf("tp %s %d %d %d", sel, from.X, y, from.Z))
 			if !wait(stepDelay) {
 				return
 			}
@@ -267,7 +193,7 @@ func (c *Commander) MoveSheep(ctx context.Context, sheepID string, to minecraft.
 		for i := 1; i <= steps; i++ {
 			x := from.X + (to.X-from.X)*i/steps
 			z := from.Z + (to.Z-from.Z)*i/steps
-			c.send(fmt.Sprintf("tp %s %d %d %d", sel, x, flyY, z))
+			c.executeSync(fmt.Sprintf("tp %s %d %d %d", sel, x, flyY, z))
 			if !wait(stepDelay) {
 				return
 			}
@@ -276,7 +202,7 @@ func (c *Commander) MoveSheep(ctx context.Context, sheepID string, to minecraft.
 		// Фаза 3: плавно вниз
 		for i := 1; i <= steps; i++ {
 			y := flyY + (to.Y-flyY)*i/steps
-			c.send(fmt.Sprintf("tp %s %d %d %d", sel, to.X, y, to.Z))
+			c.executeSync(fmt.Sprintf("tp %s %d %d %d", sel, to.X, y, to.Z))
 			if !wait(stepDelay) {
 				return
 			}
@@ -292,22 +218,22 @@ func (c *Commander) BuildPen(ctx context.Context, pen *minecraft.Pen) {
 
 	// передняя и задняя стенки (по X, длина PenWidth=10)
 	for x := min.X; x <= max.X; x++ {
-		c.send(fmt.Sprintf("setblock %d %d %d minecraft:oak_fence", x, min.Y, min.Z))
-		c.send(fmt.Sprintf("setblock %d %d %d minecraft:oak_fence", x, min.Y, max.Z))
+		c.executeSync(fmt.Sprintf("setblock %d %d %d minecraft:oak_fence", x, min.Y, min.Z))
+		c.executeSync(fmt.Sprintf("setblock %d %d %d minecraft:oak_fence", x, min.Y, max.Z))
 	}
 
 	// боковые стенки (по Z, длина PenDepth=7) — в центре пропуск под знак
 	for z := min.Z + 1; z < max.Z; z++ {
-		c.send(fmt.Sprintf("setblock %d %d %d minecraft:oak_fence", min.X, min.Y, z))
-		c.send(fmt.Sprintf("setblock %d %d %d minecraft:oak_fence", max.X, min.Y, z))
+		c.executeSync(fmt.Sprintf("setblock %d %d %d minecraft:oak_fence", min.X, min.Y, z))
+		c.executeSync(fmt.Sprintf("setblock %d %d %d minecraft:oak_fence", max.X, min.Y, z))
 	}
 
 	// знак на левой боковой стенке (min.X), смотрит наружу (на запад, rotation=12)
-	c.send(fmt.Sprintf(
+	c.executeSync(fmt.Sprintf(
 		"setblock %d %d %d minecraft:oak_sign[rotation=4]",
 		min.X-1, min.Y, centerZ,
 	))
-	c.send(fmt.Sprintf(
+	c.executeSync(fmt.Sprintf(
 		`data merge block %d %d %d {Text1:'{"text":"%s"}'}`,
 		min.X-1, min.Y, centerZ, pen.Name,
 	))
@@ -319,21 +245,21 @@ func (c *Commander) SetPenOffline(ctx context.Context, pen *minecraft.Pen) {
 
 	// периметр → красное стекло
 	for x := min.X; x <= max.X; x++ {
-		c.send(fmt.Sprintf("setblock %d %d %d minecraft:red_stained_glass", x, min.Y, min.Z))
-		c.send(fmt.Sprintf("setblock %d %d %d minecraft:red_stained_glass", x, min.Y, max.Z))
+		c.executeSync(fmt.Sprintf("setblock %d %d %d minecraft:red_stained_glass", x, min.Y, min.Z))
+		c.executeSync(fmt.Sprintf("setblock %d %d %d minecraft:red_stained_glass", x, min.Y, max.Z))
 	}
 	for z := min.Z + 1; z < max.Z; z++ {
-		c.send(fmt.Sprintf("setblock %d %d %d minecraft:red_stained_glass", min.X, min.Y, z))
-		c.send(fmt.Sprintf("setblock %d %d %d minecraft:red_stained_glass", max.X, min.Y, z))
+		c.executeSync(fmt.Sprintf("setblock %d %d %d minecraft:red_stained_glass", min.X, min.Y, z))
+		c.executeSync(fmt.Sprintf("setblock %d %d %d minecraft:red_stained_glass", max.X, min.Y, z))
 	}
 
 	centerZ := (min.Z + max.Z) / 2
 	// знак на левой боковой стенке (min.X), смотрит наружу (на запад, rotation=12)
-	c.send(fmt.Sprintf(
+	c.executeSync(fmt.Sprintf(
 		"setblock %d %d %d minecraft:oak_sign[rotation=4]",
 		min.X-1, min.Y, centerZ,
 	))
-	c.send(fmt.Sprintf(
+	c.executeSync(fmt.Sprintf(
 		`data merge block %d %d %d {Text1:'{"text":"%s"}'}`,
 		min.X-1, min.Y, centerZ, "offline",
 	))
@@ -342,29 +268,33 @@ func (c *Commander) SetPenOffline(ctx context.Context, pen *minecraft.Pen) {
 func (c *Commander) DestroyAllPens(ctx context.Context, bounds minecraft.Bounds) {
 	min := bounds.Min
 	max := bounds.Max
-	c.send(fmt.Sprintf("fill %d %d %d %d %d %d air",
+	c.executeSync(fmt.Sprintf("fill %d %d %d %d %d %d air",
 		min.X, min.Y, min.Z,
 		max.X, min.Y, max.Z,
 	))
 }
 
 func (c *Commander) CreateHologram(ctx context.Context, name string, loc minecraft.Location) {
-	c.send(fmt.Sprintf("dh h create %s -l:world:%d:%d:%d",
+	c.executeSync(fmt.Sprintf("dh h create %s -l:world:%d:%d:%d",
 		CleanTag(name), loc.X, loc.Y, loc.Z,
 	))
 }
 
 func (c *Commander) AddHologramLine(ctx context.Context, name, text string) {
-	c.send(fmt.Sprintf("dh lines add %s 1 %s", CleanTag(name), text))
+	c.executeSync(fmt.Sprintf("dh lines add %s 1 %s", CleanTag(name), text))
 }
 
 // SetHologramLine обновляет строку по номеру (1-based).
 func (c *Commander) SetHologramLine(ctx context.Context, name string, line int, text string) {
-	c.send(fmt.Sprintf("dh lines set %s 1 %d %s", CleanTag(name), line, text))
+	c.executeSync(fmt.Sprintf("dh lines set %s 1 %d %s", CleanTag(name), line, text))
 }
 
 func (c *Commander) DeleteHologram(ctx context.Context, name string) {
-	c.send(fmt.Sprintf("dh holograms delete %s", CleanTag(name)))
+	c.executeSync(fmt.Sprintf("dh holograms delete %s", CleanTag(name)))
+}
+
+func (c *Commander) RemoveHologramLine(ctx context.Context, name string, line int) {
+	c.executeSync(fmt.Sprintf("dh lines remove %s 1 %d", CleanTag(name), line))
 }
 
 func (c *Commander) HologramExists(ctx context.Context, name string) (bool, error) {

@@ -16,17 +16,17 @@ type Shard struct {
 	IndexName string
 	Shard     int
 	Role      string // "p", "r1", "r2", ...
-	NodeID    string
+	Node      string
 	State     ShardState
 }
 
-func NewShard(indexName string, shard int, role string, nodeID string, state ShardState) *Shard {
+func NewShard(indexName string, shard int, role string, node string, state ShardState) *Shard {
 	return &Shard{
 		ShardID:   fmt.Sprintf("%s:%d:%s", indexName, shard, role),
 		IndexName: indexName,
 		Shard:     shard,
 		Role:      role,
-		NodeID:    nodeID,
+		Node:      node,
 		State:     state,
 	}
 }
@@ -46,5 +46,5 @@ func (s *Shard) IsSystem() bool {
 
 // IsUnassigned возвращает true если шард не назначен ни одной ноде.
 func (s *Shard) IsUnassigned() bool {
-	return s.State == ShardStateUnassigned || s.NodeID == ""
+	return s.State == ShardStateUnassigned || s.Node == ""
 }

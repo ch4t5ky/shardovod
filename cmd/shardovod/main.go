@@ -47,6 +47,7 @@ func main() {
 		mc.Location{X: cfg.PenAreaMinX, Y: cfg.PenAreaY, Z: cfg.PenAreaMinZ},
 		mc.Location{X: cfg.PenAreaMaxX, Y: cfg.PenAreaY, Z: cfg.PenAreaMaxZ},
 		mc.Location{X: cfg.IndicesHologramX, Y: cfg.IndicesHologramY, Z: cfg.IndicesHologramZ},
+		mc.Location{X: cfg.IndicesHologramX, Y: cfg.IndicesHologramY, Z: cfg.IndicesHologramZ + 5},
 	)
 
 	// восстанавливаем маппинг из мира

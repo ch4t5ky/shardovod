@@ -3,6 +3,8 @@ package application
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 
 	mc "github.com/ch4t5ky/shardovod/internal/domain/minecraft"
 	minecraft "github.com/ch4t5ky/shardovod/internal/domain/minecraft"
@@ -24,7 +26,7 @@ func (s *Syncer) reconcileShards(ctx context.Context, shards []*os.Shard) {
 		switch {
 		case !existed:
 			s.onShardAdded(ctx, shard)
-		case prev.State != shard.State || prev.NodeID != shard.NodeID:
+		case prev.State != shard.State || prev.Node != shard.Node:
 			s.onShardUpdated(ctx, prev, shard)
 		}
 		s.prevShards[shard.ShardID] = shard
@@ -64,15 +66,15 @@ func (s *Syncer) onShardAdded(ctx context.Context, shard *os.Shard) {
 		}
 		spawnLoc = loc
 	} else {
-		penID, ok := s.mapping.PenByNode(shard.NodeID)
+		penID, ok := s.mapping.PenByNode(shard.Node)
 		if !ok {
-			log.Warnf("[syncer] no pen for node %s on shard add", shard.NodeID)
+			log.Warnf("[syncer] no pen for node %s on shard add", shard.Node)
 			return
 		}
 		spawnLoc = s.pens[penID].SpawnLocation()
 	}
 
-	sheep := minecraft.NewSheep(sheepID, "", shard.ShardID, spawnLoc)
+	sheep := minecraft.NewSheep(sheepID, sheepID, shard.ShardID, spawnLoc)
 	sheep.Color = SheepColor(shard.State, shard.IsPrimary())
 
 	s.sheep[sheepID] = sheep
@@ -97,7 +99,7 @@ func (s *Syncer) onShardUpdated(ctx context.Context, prev, next *os.Shard) {
 	}
 
 	// нода сменилась → переместить овцу
-	if prev.NodeID != next.NodeID {
+	if prev.Node != next.Node {
 		var dest mc.Location
 		if next.IsUnassigned() {
 			loc, ok := s.findFreeLocation()
@@ -108,13 +110,13 @@ func (s *Syncer) onShardUpdated(ctx context.Context, prev, next *os.Shard) {
 			dest = loc
 			log.Infof("[syncer] move sheep %s to unassigned zone", sheepID)
 		} else {
-			penID, ok := s.mapping.PenByNode(next.NodeID)
+			penID, ok := s.mapping.PenByNode(next.Node)
 			if !ok {
-				log.Warnf("[syncer] no pen for node %s", next.NodeID)
+				log.Warnf("[syncer] no pen for node %s", next.Node)
 				return
 			}
 			dest = s.pens[penID].SpawnLocation()
-			log.Infof("[syncer] move sheep %s to pen of node %s", sheepID, next.NodeID)
+			log.Infof("[syncer] move sheep %s to pen of node %s", sheepID, next.Node)
 		}
 		sheep.Position = dest
 		s.commander.MoveSheep(ctx, sheepID, dest)
@@ -142,14 +144,14 @@ func (s *Syncer) reconcileNodes(ctx context.Context, nodes []*os.Node) {
 		if node.Role != os.NodeRoleData {
 			continue
 		}
-		prev, existed := s.prevNodes[node.NodeID]
+		prev, existed := s.prevNodes[node.Name]
 		switch {
 		case !existed:
 			s.onNodeAdded(ctx, node)
 		case prev.Name != node.Name:
 			s.onNodeUpdated(ctx, prev, node)
 		}
-		s.prevNodes[node.NodeID] = node
+		s.prevNodes[node.Name] = node
 	}
 
 	for id, prev := range s.prevNodes {
@@ -178,42 +180,43 @@ func (s *Syncer) nextPenPosition() (col, row int) {
 }
 
 func (s *Syncer) onNodeAdded(ctx context.Context, node *os.Node) {
-	if penID, ok := s.mapping.PenByNode(node.NodeID); ok {
+	if penID, ok := s.mapping.PenByNode(node.Name); ok {
 		pen := s.pens[penID]
 		pen.Status = mc.PenStatusActive
 		s.commander.BuildPen(ctx, pen)
-		log.Infof("[syncer] restore pen for node %s", node.NodeID)
+		log.Infof("[syncer] restore pen for node %s", node.Name)
 		return
 	}
 
 	col, row := s.nextPenPosition()
-	pen := mc.NewPenAtGrid("pen-"+node.NodeID, node.Name, s.penAreaMin, col, row)
+	pen := mc.NewPenAtGrid("pen-"+node.Name, node.Name, s.penAreaMin, col, row)
 	s.pens[pen.PenID] = pen
-	s.mapping.BindNode(pen.PenID, node.NodeID)
+	s.mapping.BindNode(pen.PenID, node.Name)
 	s.commander.BuildPen(ctx, pen)
-	log.Infof("[syncer] build pen for node %s at col=%d row=%d", node.NodeID, col, row)
+
+	log.Infof("[syncer] build pen for node %s at col=%d row=%d", node.Name, col, row)
 }
 
 func (s *Syncer) onNodeUpdated(ctx context.Context, prev, next *os.Node) {
-	penID, ok := s.mapping.PenByNode(next.NodeID)
+	penID, ok := s.mapping.PenByNode(next.Name)
 	if !ok {
 		return
 	}
 	pen := s.pens[penID]
 	pen.Name = next.Name
 	s.commander.BuildPen(ctx, pen)
-	log.Infof("[syncer] rename pen for node %s → %s", next.NodeID, next.Name)
+	log.Infof("[syncer] rename pen for node %s → %s", next.Name, next.Name)
 }
 
 func (s *Syncer) onNodeRemoved(ctx context.Context, node *os.Node) {
-	penID, ok := s.mapping.PenByNode(node.NodeID)
+	penID, ok := s.mapping.PenByNode(node.Name)
 	if !ok {
 		return
 	}
 	pen := s.pens[penID]
 	pen.Status = mc.PenStatusOffline
 	s.commander.SetPenOffline(ctx, pen)
-	log.Infof("[syncer] node %s offline, pen %s deactivated", node.NodeID, penID)
+	log.Infof("[syncer] node %s offline, pen %s deactivated", node.Name, penID)
 }
 
 // ---------- Helpers ----------------------------------------------------------
@@ -251,7 +254,7 @@ func indexNodes(nodes []*os.Node) map[string]*os.Node {
 	idx := make(map[string]*os.Node, len(nodes))
 	for _, n := range nodes {
 		if n.Role == os.NodeRoleData {
-			idx[n.NodeID] = n
+			idx[n.Name] = n
 		}
 	}
 	return idx
@@ -277,11 +280,11 @@ func (s *Syncer) reconcileIndices(ctx context.Context, indices []*opensearch.Ind
 
 	if len(s.prevIndices) == 0 {
 		// первый тик — создаём
-		s.commander.DeleteHologram(ctx, indicesHologramName)
+		s.commander.DeleteHologram(ctx, s.indicesHologram.Name)
 		s.createIndicesHologram(ctx, visible)
 	} else if len(visible) != len(prevVisible) {
 		// количество изменилось — пересоздаём
-		s.commander.DeleteHologram(ctx, indicesHologramName)
+		s.commander.DeleteHologram(ctx, s.indicesHologram.Name)
 		s.createIndicesHologram(ctx, visible)
 	} else {
 		// количество то же — обновляем только изменившиеся строки
@@ -289,7 +292,7 @@ func (s *Syncer) reconcileIndices(ctx context.Context, indices []*opensearch.Ind
 		for i, idx := range visible {
 			prev, ok := s.prevIndices[idx.Id]
 			if !ok || prev.Health != idx.Health || prev.DocsCount != idx.DocsCount || prev.Size != idx.Size {
-				s.commander.SetHologramLine(ctx, indicesHologramName, i+2, formatIndexLine(idx))
+				s.commander.SetHologramLine(ctx, s.indicesHologram.Name, i+2, formatIndexLine(idx))
 			}
 		}
 	}
@@ -306,16 +309,93 @@ func indexIndices(indices []*os.Index) map[string]*os.Index {
 }
 
 func (s *Syncer) createIndicesHologram(ctx context.Context, indices []*opensearch.Index) {
-	s.commander.CreateHologram(ctx, indicesHologramName, s.hologramLoc)
+	s.commander.CreateHologram(ctx, s.indicesHologram.Name, s.indicesHologram.Location)
 	// первая строка уже создана — задаём заголовок через set
-	s.commander.SetHologramLine(ctx, indicesHologramName, 1, "<#00BFFF>Indices</#4B0082>")
+	s.commander.SetHologramLine(ctx, s.indicesHologram.Name, 1, "<#00BFFF>Indices</#4B0082>")
 	// остальные строки добавляем через add
 	for _, idx := range indices {
-		s.commander.AddHologramLine(ctx, indicesHologramName, formatIndexLine(idx))
+		s.commander.AddHologramLine(ctx, s.indicesHologram.Name, formatIndexLine(idx))
 	}
 }
 
 func formatIndexLine(idx *opensearch.Index) string {
 	color := healthColor(idx.Health)
 	return fmt.Sprintf("%s%s &#AAAAAA%d docs %s", color, idx.Name, idx.DocsCount, idx.Size)
+}
+
+func (s *Syncer) reconcileNodeStats(ctx context.Context) {
+	if len(s.prevNodes) == 0 {
+		return
+	}
+
+	s.commander.DeleteHologram(ctx, s.statsHologram.Name)
+	s.commander.CreateHologram(ctx, s.statsHologram.Name, s.statsHologram.Location)
+	s.commander.SetHologramLine(ctx, s.statsHologram.Name, 1, "<#00BFFF>══ Cluster Stats ══")
+
+	shards, err := s.osClient.GetShards(ctx)
+	if err != nil {
+		log.Errorf("[syncer] failed to get shards: %v", err)
+	}
+
+	nodes := make([]*opensearch.Node, 0, len(s.prevNodes))
+	for _, n := range s.prevNodes {
+		nodes = append(nodes, n)
+	}
+
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].Name < nodes[j].Name
+	})
+
+	for _, node := range nodes {
+		st, err := s.osClient.GetNodeStats(ctx, node.NodeID)
+		if err != nil {
+			log.Errorf("[syncer] node stats %s: %v", node.Name, err)
+			s.commander.AddHologramLine(ctx, s.statsHologram.Name, "&#AAAAAA error")
+			continue
+		}
+
+		shardCount := countShardsOnNode(shards, node.Name)
+
+		s.commander.AddHologramLine(ctx, s.statsHologram.Name,
+			formatNodeStatsLine(node.Name, st, shardCount, s.clusterState.Settings.MaxShardsPerNode))
+	}
+}
+
+func countShardsOnNode(shards []*opensearch.Shard, nodeName string) int {
+	count := 0
+	for _, shard := range shards {
+		if shard.Node == nodeName && !shard.IsUnassigned() {
+			count++
+		}
+	}
+	return count
+}
+
+func formatNodeStatsLine(nodeName string, st *opensearch.NodeStats, shardCount, maxShards int) string {
+	return fmt.Sprintf(
+		"<#FFDD57>%s &#AAAAAA| %s %s %s | Shrds &#FFFFFF%d/%d",
+		nodeName,
+		formatBarShort("C", st.CPUPercent),
+		formatBarShort("R", st.HeapPercent),
+		formatBarShort("D", st.DiskPercent),
+		shardCount, maxShards,
+	)
+}
+
+func formatBarShort(label string, pct int) string {
+	const total = 4
+	filled := pct * total / 100
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", total-filled)
+	return fmt.Sprintf("&#AAAAAA%s %s%s", label, barColor(pct), bar)
+}
+
+func barColor(pct int) string {
+	switch {
+	case pct >= 80:
+		return "<#FF4500>"
+	case pct >= 60:
+		return "<#FFA500>"
+	default:
+		return "<#00FF7F>"
+	}
 }
