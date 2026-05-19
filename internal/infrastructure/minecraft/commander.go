@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ch4t5ky/shardovod/internal/domain/minecraft"
@@ -22,6 +23,7 @@ type Commander struct {
 	addr     string
 	password string
 	conn     *rcon.Conn
+	mu       sync.Mutex // ← добавить
 }
 
 func NewCommander(addr, password string) *Commander {
@@ -34,19 +36,24 @@ func NewCommander(addr, password string) *Commander {
 
 // Close drains the queue, then shuts down the dispatcher and connection.
 func (c *Commander) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.conn != nil {
 		c.conn.Close()
 		c.conn = nil
 	}
 }
-
 func (c *Commander) executeSync(cmd string) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	for {
 		if c.conn == nil {
 			if err := c.connect(); err != nil {
 				log.Errorf("[mc] connect error: %v, retrying in %s", err, redialDelay)
+				c.mu.Unlock()
 				time.Sleep(redialDelay)
+				c.mu.Lock()
 				continue
 			}
 		}

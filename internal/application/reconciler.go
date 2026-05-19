@@ -311,7 +311,7 @@ func indexIndices(indices []*os.Index) map[string]*os.Index {
 func (s *Syncer) createIndicesHologram(ctx context.Context, indices []*opensearch.Index) {
 	s.commander.CreateHologram(ctx, s.indicesHologram.Name, s.indicesHologram.Location)
 	// первая строка уже создана — задаём заголовок через set
-	s.commander.SetHologramLine(ctx, s.indicesHologram.Name, 1, "<#00BFFF>Indices</#4B0082>")
+	s.commander.SetHologramLine(ctx, s.indicesHologram.Name, 1, "<#00BFFF>══ Indices ══ (GET _cat/indices?v)")
 	// остальные строки добавляем через add
 	for _, idx := range indices {
 		s.commander.AddHologramLine(ctx, s.indicesHologram.Name, formatIndexLine(idx))
@@ -330,7 +330,7 @@ func (s *Syncer) reconcileNodeStats(ctx context.Context) {
 
 	s.commander.DeleteHologram(ctx, s.statsHologram.Name)
 	s.commander.CreateHologram(ctx, s.statsHologram.Name, s.statsHologram.Location)
-	s.commander.SetHologramLine(ctx, s.statsHologram.Name, 1, "<#00BFFF>══ Cluster Stats ══")
+	s.commander.SetHologramLine(ctx, s.statsHologram.Name, 1, "<#00BFFF>══ Cluster Stats ══ (GET /_nodes/{node_id}/stats/)")
 
 	shards, err := s.osClient.GetShards(ctx)
 	if err != nil {
