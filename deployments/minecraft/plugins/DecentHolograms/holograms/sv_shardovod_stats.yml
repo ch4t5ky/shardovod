@@ -1,0 +1,21 @@
+location: world:66.000:18.000:50.000
+enabled: true
+display-range: 48
+update-range: 48
+update-interval: 20
+facing: 0.0
+down-origin: false
+pages:
+- lines:
+  - content: <#00BFFF>══ Cluster Stats ══ (GET /_nodes/{node_id}/stats/)
+    height: 0.3
+  - content: <#FFDD57>opensearch-hot &#AAAAAA| &#AAAAAAC <#00FF7F>░░░░ &#AAAAAAR <#FFA500>██░░
+      &#AAAAAAD <#00FF7F>░░░░ | Shrds &#FFFFFF12/1000
+    height: 0.3
+  - content: <#FFDD57>opensearch-hot-2 &#AAAAAA| &#AAAAAAC <#00FF7F>░░░░ &#AAAAAAR
+      <#00FF7F>██░░ &#AAAAAAD <#00FF7F>░░░░ | Shrds &#FFFFFF9/1000
+    height: 0.3
+  - content: <#FFDD57>opensearch-warm &#AAAAAA| &#AAAAAAC <#00FF7F>░░░░ &#AAAAAAR
+      <#00FF7F>░░░░ &#AAAAAAD <#00FF7F>░░░░ | Shrds &#FFFFFF12/1000
+    height: 0.3
+  actions: {}

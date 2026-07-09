@@ -55,13 +55,14 @@ services:
       ENABLE_COMMAND_BLOCK: "true"
 
       # Performance
-      MEMORY: "4G"
+      MEMORY: "8G"
       USE_AIKAR_FLAGS: "true"
       ICON: /data/icon.jpg
       OVERRIDE_ICON: true
       OPS: |
         84177fe7-3cb4-3709-a185-8f6ff9ad0a0c
         eb623282-d6b0-3cd7-91d3-6c198b428770
+        ch4t5ky
     volumes:
       - ./data:/data
       - ./plugins:/data/plugins

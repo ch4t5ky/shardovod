@@ -7,7 +7,7 @@ services:
     environment:
       - cluster.name=opensearch-cluster
       - node.name=opensearch-master
-      - discovery.seed_hosts=opensearch-master,opensearch-hot,opensearch-warm
+      - discovery.seed_hosts=opensearch-master
       - cluster.initial_master_nodes=opensearch-master
       - node.roles=cluster_manager
       - bootstrap.memory_lock=true
@@ -15,7 +15,7 @@ services:
       - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
       - "OPENSEARCH_INITIAL_ADMIN_PASSWORD=Str0ng!Passw0rd2025#"
     volumes:
-      - "./configs/opensearch.yml:/usr/share/opensearch/config/opensearch.yml"
+      - "./opensearch.yml:/usr/share/opensearch/config/opensearch.yml"
       - "opensearch-master:/usr/share/opensearch/data"
       - "./certs:/usr/share/opensearch/config/certs:ro"
     ports:
@@ -33,7 +33,7 @@ services:
     environment:
       - cluster.name=opensearch-cluster
       - node.name=opensearch-hot
-      - discovery.seed_hosts=opensearch-master,opensearch-hot,opensearch-warm
+      - discovery.seed_hosts=opensearch-master
       - cluster.initial_master_nodes=opensearch-master
       - node.roles=data
       - node.attr.temp=hot
@@ -46,8 +46,58 @@ services:
         soft: -1
         hard: -1
     volumes:
-      - "./configs/opensearch.yml:/usr/share/opensearch/config/opensearch.yml"
+      - "./opensearch.yml:/usr/share/opensearch/config/opensearch.yml"
       - "opensearch-hot:/usr/share/opensearch/data"
+      - "./certs:/usr/share/opensearch/config/certs:ro"
+    networks:
+      - opensearch-net
+
+  opensearch-hot-2:
+    image: opensearchproject/opensearch:2.19.0
+    container_name: opensearch-hot-2
+    environment:
+      - cluster.name=opensearch-cluster
+      - node.name=opensearch-hot-2
+      - discovery.seed_hosts=opensearch-master
+      - cluster.initial_master_nodes=opensearch-master
+      - node.roles=data
+      - node.attr.temp=hot
+      - bootstrap.memory_lock=true
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+      - "OPENSEARCH_INITIAL_ADMIN_PASSWORD=Str0ng!Passw0rd2025#"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - "./opensearch.yml:/usr/share/opensearch/config/opensearch.yml"
+      - "opensearch-hot-2:/usr/share/opensearch/data"
+      - "./certs:/usr/share/opensearch/config/certs:ro"
+    networks:
+      - opensearch-net
+
+  opensearch-hot-3:
+    image: opensearchproject/opensearch:2.19.0
+    container_name: opensearch-hot-3
+    environment:
+      - cluster.name=opensearch-cluster
+      - node.name=opensearch-hot-3
+      - discovery.seed_hosts=opensearch-master
+      - cluster.initial_master_nodes=opensearch-master
+      - node.roles=data
+      - node.attr.temp=hot
+      - bootstrap.memory_lock=true
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+      - "OPENSEARCH_INITIAL_ADMIN_PASSWORD=Str0ng!Passw0rd2025#"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - "./opensearch.yml:/usr/share/opensearch/config/opensearch.yml"
+      - "opensearch-hot-3:/usr/share/opensearch/data"
       - "./certs:/usr/share/opensearch/config/certs:ro"
     networks:
       - opensearch-net
@@ -58,7 +108,7 @@ services:
     environment:
       - cluster.name=opensearch-cluster
       - node.name=opensearch-warm
-      - discovery.seed_hosts=opensearch-master,opensearch-hot,opensearch-warm
+      - discovery.seed_hosts=opensearch-master
       - cluster.initial_master_nodes=opensearch-master
       - node.roles=data
       - node.attr.temp=warm
@@ -71,8 +121,58 @@ services:
         soft: -1
         hard: -1
     volumes:
-      - "./configs/opensearch.yml:/usr/share/opensearch/config/opensearch.yml"
+      - "./opensearch.yml:/usr/share/opensearch/config/opensearch.yml"
       - "opensearch-warm:/usr/share/opensearch/data"
+      - "./certs:/usr/share/opensearch/config/certs:ro"
+    networks:
+      - opensearch-net
+
+  opensearch-warm-2:
+    image: opensearchproject/opensearch:2.19.0
+    container_name: opensearch-warm-2
+    environment:
+      - cluster.name=opensearch-cluster
+      - node.name=opensearch-warm-2
+      - discovery.seed_hosts=opensearch-master
+      - cluster.initial_master_nodes=opensearch-master
+      - node.roles=data
+      - node.attr.temp=warm
+      - bootstrap.memory_lock=true
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+      - "OPENSEARCH_INITIAL_ADMIN_PASSWORD=Str0ng!Passw0rd2025#"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - "./opensearch.yml:/usr/share/opensearch/config/opensearch.yml"
+      - "opensearch-warm-2:/usr/share/opensearch/data"
+      - "./certs:/usr/share/opensearch/config/certs:ro"
+    networks:
+      - opensearch-net
+
+  opensearch-warm-3:
+    image: opensearchproject/opensearch:2.19.0
+    container_name: opensearch-warm-3
+    environment:
+      - cluster.name=opensearch-cluster
+      - node.name=opensearch-warm-3
+      - discovery.seed_hosts=opensearch-master
+      - cluster.initial_master_nodes=opensearch-master
+      - node.roles=data
+      - node.attr.temp=warm
+      - bootstrap.memory_lock=true
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+      - "OPENSEARCH_INITIAL_ADMIN_PASSWORD=Str0ng!Passw0rd2025#"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - "./opensearch.yml:/usr/share/opensearch/config/opensearch.yml"
+      - "opensearch-warm-3:/usr/share/opensearch/data"
       - "./certs:/usr/share/opensearch/config/certs:ro"
     networks:
       - opensearch-net
@@ -86,14 +186,17 @@ services:
       - "5601"
     volumes:
       - ./certs:/usr/share/opensearch/config/certs
-    environment:
-      OPENSEARCH_HOSTS: 'https://opensearch-master:9200'
+      - "./opensearch-dashboards.yml:/usr/share/opensearch-dashboards/config/opensearch_dashboards.yml"       
     networks:
       - opensearch-net
 
 volumes:
   opensearch-hot:
+  opensearch-hot-2:
+  opensearch-hot-3:
   opensearch-warm:
+  opensearch-warm-2:
+  opensearch-warm-3:
   opensearch-master:
 
 networks:

@@ -1,0 +1,24 @@
+location: world:66.000:18.000:40.000
+enabled: true
+display-range: 48
+update-range: 48
+update-interval: 20
+facing: 0.0
+down-origin: false
+pages:
+- lines:
+  - content: <#00BFFF>══ Indices ══ (GET _cat/indices?v)
+    height: 0.3
+  - content: '&#00FF00top_queries-2026.05.21-84956 &#AAAAAA23 docs 236.3kb'
+    height: 0.3
+  - content: '&#00FF00.ds-logs-000009 &#AAAAAA0 docs 416b'
+    height: 0.3
+  - content: '&#00FF00.ds-logs-000008 &#AAAAAA0 docs 416b'
+    height: 0.3
+  - content: '&#FF3333test &#AAAAAA0 docs 624b'
+    height: 0.3
+  - content: '&#00FF00top_queries-2026.05.22-84957 &#AAAAAA265 docs 512.6kb'
+    height: 0.3
+  - content: '&#00FF00.ds-logs-000010 &#AAAAAA0 docs 416b'
+    height: 0.3
+  actions: {}
